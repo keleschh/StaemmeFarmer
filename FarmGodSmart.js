@@ -26,6 +26,8 @@
 //  - Spähberichte werden ausgewertet (1 Request pro neuem Bericht): Rohstoffe und Gebäude liefern
 //    exakte Produktion, Versteck und Speicher. Ab dann rechnet das Skript für dieses Dorf pro
 //    Rohstoffart, was tatsächlich plünderbar ist. Ohne Spähbericht bleibt die Punkteschätzung.
+//    Wächst das Dorf nach dem Spähen (Punkte steigen), wächst die Produktion im Modell mit; eigene
+//    Beutezüge korrigieren sie zusätzlich. Ein neuer Spähbericht setzt alles wieder exakt.
 //  - Tabelle zeigt pro Farm, wann die Truppen wieder zu Hause sind.
 //  - Tabelle zeigt erwartete Beute, Score und die letzte Beute (voll / nicht voll, wie lange her).
 //  - Barbaren-/Bonusdörfer ohne Bericht können mit eingeplant werden (Dorfliste der Welt,
@@ -900,9 +902,27 @@ window.FarmGod.Main = (function (Library, Translation) {
     if (b && RES.some((k) => typeof b[k] !== 'undefined')) {
       let hidden = HIDE_BY_LEVEL[levelOf(b, 'hide', 10)];
       let cap = WAREHOUSE_BY_LEVEL[Math.max(1, levelOf(b, 'storage', 30))];
+      let prod = RES.map((k) => PROD_BY_LEVEL[levelOf(b, k, 30)] * worldSpeed);
+
+      // the village may have grown since the scout report: add the growth
+      // that the points gained since then suggest (evenly over the mines)
+      if (farm.points && h.scoutPoints && farm.points > h.scoutPoints) {
+        let growth =
+          (lib.estimateProduction(farm.points) -
+            lib.estimateProduction(h.scoutPoints)) *
+          worldSpeed;
+        if (growth > 0) prod = prod.map((p) => p + growth / 3);
+      }
+      // own hauls since the scout report can still correct the total
+      let total = prod.reduce((a, c) => a + c, 0) || 1;
+      let corrected = total;
+      if (h.prodMin) corrected = Math.max(corrected, h.prodMin);
+      if (h.prodMax) corrected = Math.min(corrected, h.prodMax);
+      if (corrected !== total) prod = prod.map((p) => (p * corrected) / total);
+
       return {
         exact: true,
-        prod: RES.map((k) => PROD_BY_LEVEL[levelOf(b, k, 30)] * worldSpeed),
+        prod: prod,
         hidden: [hidden, hidden, hidden],
         cap: [cap, cap, cap],
       };
@@ -1057,6 +1077,11 @@ window.FarmGod.Main = (function (Library, Translation) {
       if (scout && scout.buildings) {
         h.buildings = Object.assign(h.buildings || {}, scout.buildings);
         h.scoutReportId = scout.reportId;
+        h.scoutTime = T;
+        h.scoutPoints = farm.points || 0;
+        // fresh exact data replaces what was learned from hauls before
+        delete h.prodMin;
+        delete h.prodMax;
       }
 
       let isNewReport = T > 0 && T > (h.lastReport || 0);
@@ -1069,7 +1094,7 @@ window.FarmGod.Main = (function (Library, Translation) {
         if (scout && scout.res) rawAtT = scout.res.slice();
 
         if (farm.has_loot_info) {
-          if (!m.exact && h.emptiedAt && T > h.emptiedAt && capSent > 0) {
+          if (h.emptiedAt && T > h.emptiedAt && capSent > 0) {
             let hours = (T - h.emptiedAt) / 3600;
             if (hours >= 0.25) {
               let rate = capSent / hours;
@@ -1314,7 +1339,16 @@ window.FarmGod.Main = (function (Library, Translation) {
 
   // label for the "last haul" column: full / not full + age of the report
   const lootLabel = function (loot) {
-    let tag = loot && loot.scouted ? ` <span title="${t.table.scoutedTitle}">🔍</span>` : '';
+    let tag = '';
+    if (loot && loot.scouted) {
+      let age =
+        loot.scoutAgeHours === null
+          ? ''
+          : loot.scoutAgeHours < 48
+            ? ` (${Math.round(loot.scoutAgeHours)}h)`
+            : ` (${Math.round(loot.scoutAgeHours / 24)}d)`;
+      tag = ` <span title="${t.table.scoutedTitle}${age}">🔍${age}</span>`;
+    }
     if (loot && loot.isNew)
       return `<span style="color:#1a4d8f;">${t.table.lootNew}</span>` + tag;
     if (!loot || !loot.known) return t.table.lootUnknown + tag;
@@ -1911,6 +1945,9 @@ window.FarmGod.Main = (function (Library, Translation) {
           loot: {
             known: hasLootInfo(pick.farm),
             scouted: modelOf(pick.farm).exact,
+            scoutAgeHours: historyOf(pick.farm).scoutTime
+              ? Math.max(0, (serverTime - historyOf(pick.farm).scoutTime) / 3600)
+              : null,
             isNew: !!pick.farm.is_new,
             full: !!pick.farm.max_loot,
             ageMinutes:
