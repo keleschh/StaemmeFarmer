@@ -24,7 +24,7 @@
 //  - Laufende und gerade geplante Angriffe werden vom Vorrat abgezogen (bei nur geschätztem Vorrat
 //    gilt das Dorf danach als leer). Mehrere Angriffe auf ein Dorf im selben Durchlauf gibt es
 //    nur, wenn der Vorrat aus einem Spähbericht bekannt ist.
-//  - Spähberichte (1 Request pro neuem Bericht, max. 10 pro Durchlauf) liefern Rohstoffe, Gebäude
+//  - Spähberichte (1 Request pro neuem Bericht, max. 5 pro Durchlauf) liefern Rohstoffe, Gebäude
 //    (Produktion, Versteck, Speicher) und Truppen. Dörfer mit Truppen werden gemieden. Wächst ein
 //    Dorf nach dem Spähen (Punkte steigen), wächst die Produktion im Modell mit.
 //  - Barbaren-/Bonusdörfer ohne Bericht können mit eingeplant werden (Punktelimit als Sicherung
@@ -39,6 +39,9 @@
 //    Spähbericht und übernimmt daraus die Gebäude.
 //  - Gedächtnis pro Dorf im Browser (localStorage), 14 Tage nach dem letzten Bericht gelöscht.
 //    Feste Regeln stehen im Block RULES weiter unten.
+//  - Anfragen ans Spiel: höchstens 2 gleichzeitig, 250 ms Pause dazwischen, Fehlschläge werden
+//    erst nach 2 bzw. 5 s wiederholt; die Dorfliste der Welt wird 3 h zwischengespeichert. Das
+//    Spiel sperrt sonst zeitweise alle Anfragen ("Blockierte Anfrage").
 // Das Senden selbst ist unverändert: jede Farm braucht weiterhin einen Klick bzw. Enter.
 //
 // Hungarian translation provided by =Krumpli=
@@ -48,12 +51,20 @@ ScriptAPI.register('FarmGod', true, 'Warre', 'nl.tribalwars@coma.innogames.de');
 window.FarmGod = {};
 window.FarmGod.Library = (function () {
   /**** TribalWarsLibrary.js ****/
-  if (typeof window.twLib === 'undefined') {
+  // Das Spiel sperrt Konten, die zu viele Anfragen in kurzer Zeit machen
+  // ("Blockierte Anfrage"). Darum laufen alle Anfragen des Skripts über diese
+  // Queue: nur `lanes` gleichzeitig, `delayMs` Pause zwischen zwei Anfragen
+  // einer Bahn, und ein Fehlschlag wird erst nach `retryDelaysMs` wiederholt
+  // (sofortiges Wiederholen würde eine Sperre nur verlängern).
+  if (typeof window.twLib === 'undefined' || !window.twLib.delayMs) {
     window.twLib = {
       queues: null,
+      lanes: 2,
+      delayMs: 250,
+      retryDelaysMs: [2000, 5000],
       init: function () {
         if (this.queues === null) {
-          this.queues = this.queueLib.createQueues(5);
+          this.queues = this.queueLib.createQueues(this.lanes);
         }
       },
       queueLib: {
@@ -72,6 +83,10 @@ window.FarmGod.Library = (function () {
           this.doNext = function () {
             let item = this.dequeue();
             let self = this;
+            let later = function (ms) {
+              if (ms > 0) setTimeout(() => self.start(), ms);
+              else self.start();
+            };
 
             if (item.action == 'openWindow') {
               window
@@ -86,7 +101,7 @@ window.FarmGod.Library = (function () {
               $[item.action](...item.arguments)
                 .done(function () {
                   item.promise.resolve.apply(null, arguments);
-                  self.start();
+                  later(twLib.delayMs);
                 })
                 .fail(function () {
                   item.attempts += 1;
@@ -95,14 +110,15 @@ window.FarmGod.Library = (function () {
                     twLib.queueLib.maxAttempts
                   ) {
                     self.enqueue(item, true);
+                    let waits = twLib.retryDelaysMs;
+                    later(waits[Math.min(item.attempts - 1, waits.length - 1)] || 0);
                   } else {
                     item.promise.reject.apply(
                       null,
                       arguments
                     );
+                    later(twLib.delayMs);
                   }
-
-                  self.start();
                 });
             }
           };
@@ -140,9 +156,11 @@ window.FarmGod.Library = (function () {
           return arr;
         },
         addItem: function (item) {
-          let leastBusyQueue = twLib.queues
-            .map((q) => q.length)
-            .reduce((next, curr) => (curr < next ? curr : next), 0);
+          let load = (q) => q.length + (q.working ? 1 : 0);
+          let leastBusyQueue = 0;
+          twLib.queues.forEach((q, i) => {
+            if (load(q) < load(twLib.queues[leastBusyQueue])) leastBusyQueue = i;
+          });
           twLib.queues[leastBusyQueue].enqueue(item);
         },
         orchestrator: function (type, arg) {
@@ -863,16 +881,23 @@ window.FarmGod.Main = (function (Library, Translation) {
     // Stunden Produktion angesammelt (grobe Annahme für den Vorrat).
     untouchedHours: 36,
     // Wie viele neue Berichte (Späh- und eigene Beuteberichte) pro Durchlauf
-    // höchstens geladen werden. Spähberichte zuerst.
-    maxReportFetches: 10,
+    // höchstens geladen werden. Spähberichte zuerst. Klein halten: jeder
+    // Bericht ist eine Anfrage, und das Spiel sperrt bei zu vielen.
+    maxReportFetches: 5,
     // So viele ausgewertete Angriffe (erwartet vs. tatsächlich) werden behalten.
     maxStats: 300,
     // Alte Spähberichte nachladen: der Farm-Assistent zeigt nur den letzten
     // Bericht je Dorf; für Dörfer ohne Gebäudedaten wird höchstens alle
     // backfillHours Stunden die Angriffsbericht-Übersicht (so viele Seiten)
     // nach dem letzten Spähbericht durchsucht. Berichte zählen zum Budget.
+    // Reichte das Budget nicht für alle gefundenen Berichte, geht es nach
+    // backfillRetryHours weiter (nicht sofort beim nächsten Start).
     backfillHours: 24,
     backfillPages: 5,
+    backfillRetryHours: 1,
+    // Die Dorfliste der Welt (village.txt, auf großen Welten mehrere MB) wird
+    // so viele Stunden im Browser zwischengespeichert.
+    villageListHours: 3,
     // Truppen, die nach der Planung zu Hause stünden, gehen als Probe (Vorlage A)
     // auf Dörfer ohne Bericht, nächste zuerst, bis zu so vielen Stunden Anmarsch.
     probeMaxTravelHours: 3,
@@ -1303,11 +1328,15 @@ window.FarmGod.Main = (function (Library, Translation) {
     return loadPage(0, RULES.backfillPages).then(() => {
       let all = Object.values(found);
       let todo = all.slice(0, budget);
-      // budget used up before every found report could be read: let the
-      // next run continue right away instead of waiting backfillHours
+      // budget used up before every found report could be read: continue
+      // after backfillRetryHours instead of waiting the full backfillHours
+      // (not right away: every run would reload the list pages otherwise)
       if (all.length > budget) {
         try {
-          localStorage.setItem(BACKFILL_KEY, JSON.stringify({ time: 0 }));
+          localStorage.setItem(
+            BACKFILL_KEY,
+            JSON.stringify({ time: serverTime - (RULES.backfillHours - RULES.backfillRetryHours) * 3600 })
+          );
         } catch (e) {
           /* ignore */
         }
@@ -1793,6 +1822,8 @@ window.FarmGod.Main = (function (Library, Translation) {
     return html;
   };
 
+  const VILLAGES_KEY = 'FarmGodSmart_villages';
+
   const getData = function (
     group,
     newbarbs,
@@ -1810,26 +1841,54 @@ window.FarmGod.Main = (function (Library, Translation) {
 
     // One request for the world's village list: points of every village
     // (production estimate) and, if wanted, all barbarian/bonus villages
-    // (player id 0) up to the points limit as farm candidates.
+    // (player id 0) up to the points limit as farm candidates. The list is
+    // cached for villageListHours (only the columns the script needs, so it
+    // fits into localStorage on big worlds too).
+    let applyVillageList = (compact) => {
+      (String(compact).match(/[^\r\n]+/g) || []).forEach((line) => {
+        let [id, x, y, player_id, points] = line.split(',');
+        if (!x || !y) return;
+        let coord = `${x}|${y}`;
+        let pts = parseInt(points) || 0;
+        data.points[coord] = pts;
+        if (
+          newbarbs &&
+          player_id == 0 &&
+          (!newbarbsMaxPoints || pts <= newbarbsMaxPoints)
+        ) {
+          data.newbarbs[coord] = { id: parseInt(id), points: pts };
+        }
+      });
+      return data;
+    };
     let loadVillageList = () => {
       if (!autoProduction && !newbarbs) return data;
+      let now = Math.round(lib.getCurrentServerTime() / 1000);
+      let cached = null;
+      try {
+        cached = JSON.parse(localStorage.getItem(VILLAGES_KEY));
+      } catch (e) {
+        /* ignore */
+      }
+      if (cached && cached.text && now - cached.time < RULES.villageListHours * 3600) {
+        return applyVillageList(cached.text);
+      }
       return twLib.get('/map/village.txt').then(
         (allVillages) => {
-          (String(allVillages).match(/[^\r\n]+/g) || []).forEach((line) => {
-            let [id, name, x, y, player_id, points] = line.split(',');
-            if (!x || !y) return;
-            let coord = `${x}|${y}`;
-            let pts = parseInt(points) || 0;
-            data.points[coord] = pts;
-            if (
-              newbarbs &&
-              player_id == 0 &&
-              (!newbarbsMaxPoints || pts <= newbarbsMaxPoints)
-            ) {
-              data.newbarbs[coord] = { id: parseInt(id), points: pts };
-            }
-          });
-          return data;
+          // id,name,x,y,player_id,points,rank -> id,x,y,player_id,points
+          let compact = (String(allVillages).match(/[^\r\n]+/g) || [])
+            .map((line) => {
+              let [id, , x, y, player_id, points] = line.split(',');
+              return x && y ? [id, x, y, player_id, points].join(',') : '';
+            })
+            .filter(Boolean)
+            .join('\n');
+          try {
+            localStorage.setItem(VILLAGES_KEY, JSON.stringify({ time: now, text: compact }));
+          } catch (e) {
+            /* too big for localStorage: load it every run then */
+          }
+          return applyVillageList(compact);
         },
         () => data // could not load -> no new barbs, manual production value
       );

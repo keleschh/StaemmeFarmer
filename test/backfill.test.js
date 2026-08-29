@@ -74,7 +74,7 @@ describe('Alte Spähberichte nachladen', () => {
     assert.equal(env.window.requests.filter((u) => u.includes('view=1124841')).length, 0, '600|417 ist nicht im Farm-Assistenten, Bericht nicht geladen');
   });
 
-  test('Budget aufgebraucht -> Sperre wird nicht gesetzt, nächster Lauf macht weiter', async () => {
+  test('Budget aufgebraucht -> nächster Lauf macht nach backfillRetryHours weiter, nicht sofort', async () => {
     // zwei Dörfer ohne Gebäudedaten, beide mit Spähbericht in der Liste, Budget 1
     const rows = rowFor600 + '\n' + rowFor600.replace(/99001/g, '99002').replace('(600|417)', '(588|425)');
     const list = fixture('report_list_attack.html').replace('greift Barbarendorf (588|425) K45 an', 'späht Barbarendorf (588|425) K45')
@@ -84,8 +84,16 @@ describe('Alte Spähberichte nachladen', () => {
     await tick();
     await env.internals.getData(0, false, false, true, 0);
     assert.equal(env.window.requests.filter((u) => u.includes('screen=report&mode=all&view=')).length, 1);
-    assert.equal(JSON.parse(env.window.localStorage.getItem('FarmGodSmart_backfill')).time, 0);
-    // zweiter Lauf: sofort weiter, zweites Dorf wird geladen
+    const R = env.internals.RULES;
+    const now = Math.round(env.lib.getCurrentServerTime() / 1000);
+    const mark = JSON.parse(env.window.localStorage.getItem('FarmGodSmart_backfill')).time;
+    assert.equal(mark, now - (R.backfillHours - R.backfillRetryHours) * 3600);
+    // zweiter Lauf direkt danach: keine Listenseiten (sonst würde jeder Start die Liste neu laden)
+    env.window.requests.length = 0;
+    await env.internals.getData(0, false, false, true, 0);
+    assert.equal(env.window.requests.filter((u) => u.includes('mode=attack')).length, 0);
+    // eine Stunde später: weiter, zweites Dorf wird geladen
+    env.window.localStorage.setItem('FarmGodSmart_backfill', JSON.stringify({ time: mark - R.backfillRetryHours * 3600 }));
     env.window.requests.length = 0;
     await env.internals.getData(0, false, false, true, 0);
     assert.equal(env.window.requests.filter((u) => u.includes('mode=attack')).length, 1);

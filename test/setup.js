@@ -155,6 +155,9 @@ export function createEnv(opts = {}) {
 
   // ---- load the script ----
   w.eval(scriptSrc);
+  // no pauses between requests in tests (the script throttles them for the game)
+  w.twLib.delayMs = 0;
+  w.twLib.retryDelaysMs = [0, 0];
   return { window: w, $, document: w.document, lib: w.FarmGod.Library, main: w.FarmGod.Main, internals: w.FarmGod.Main._internals };
 }
 
