@@ -587,6 +587,7 @@ window.FarmGod.Translation = (function () {
         attacks: 'attacks',
         totalLoot: 'expected loot',
         troopsBack: 'troops back from',
+        probeTag: 'probe',
         goTo: 'Ga naar',
       },
       messages: {
@@ -653,6 +654,7 @@ window.FarmGod.Translation = (function () {
         attacks: 'attacks',
         totalLoot: 'expected loot',
         troopsBack: 'troops back from',
+        probeTag: 'probe',
         goTo: 'Go to',
       },
       messages: {
@@ -717,6 +719,7 @@ window.FarmGod.Translation = (function () {
         attacks: 'attacks',
         totalLoot: 'expected loot',
         troopsBack: 'troops back from',
+        probeTag: 'probe',
         goTo: 'Go to',
       },
       messages: {
@@ -782,6 +785,7 @@ window.FarmGod.Translation = (function () {
         attacks: 'Angriffe',
         totalLoot: 'erwartete Beute',
         troopsBack: 'Truppen zurück ab',
+        probeTag: 'Probe',
         goTo: 'Gehe zu',
       },
       messages: {
@@ -838,6 +842,9 @@ window.FarmGod.Main = (function (Library, Translation) {
     untouchedHours: 36,
     // Wie viele neue Spähberichte pro Durchlauf höchstens geladen werden.
     maxReportFetches: 10,
+    // Truppen, die nach der Planung zu Hause stünden, gehen als Probe (Vorlage A)
+    // auf Dörfer ohne Bericht, nächste zuerst, bis zu so vielen Stunden Anmarsch.
+    probeMaxTravelHours: 3,
   };
 
   // Produktion / Versteck / Speicher je Stufe (Speed 1)
@@ -1476,7 +1483,7 @@ window.FarmGod.Main = (function (Library, Translation) {
             }</a></td>
                     <td style="text-align:center;">${val.fields.toFixed(1)}</td>
                     <td style="text-align:center;" title="${details}">~${Math.round(val.expected)} / ${val.capacity
-            }${val.fallback ? ` <span style="color:#a00;">(${t.table.fallbackTag})</span>` : ''}</td>
+            }${val.fallback ? ` <span style="color:#a00;">(${t.table.fallbackTag})</span>` : ''}${val.probe ? ` <span style="color:#1a4d8f;">(${t.table.probeTag})</span>` : ''}</td>
                     <td style="text-align:center;">${lootLabel(val.loot)}</td>
                     <td style="text-align:center;">${formatTime(val.returnTime)}</td>
                     <td style="text-align:center;"><a href="#" data-origin="${val.origin.id
@@ -2134,8 +2141,60 @@ window.FarmGod.Main = (function (Library, Translation) {
           entry.expected = Math.min(stockBefore(entry), entry.capacity);
           entry.score = scoreOf(entry);
         });
-        entries().sort((a, b) => b.score - a.score || a.fields - b.fields);
       }
+
+      // ---- pass 2d: troops still at home probe villages without a report
+      // (information is worth more than the trip), nearest first
+      if (templateA) {
+        let planned = {};
+        (plan.farms[prop] || []).forEach((entry) => (planned[entry.target.coord] = true));
+        let probes = candidates
+          .filter((c) => data.farms.farms[c.coord].is_new && !planned[c.coord])
+          .map((c) => ({ c, travel: Math.round(c.dis * templateA.speed * 60) }))
+          .filter((p) => p.travel <= RULES.probeMaxTravelHours * 3600)
+          .sort((a, b) => a.travel - b.travel);
+
+        for (let p of probes) {
+          let unitsLeft = lib.subtractArrays(origin.units, templateA.units);
+          if (!unitsLeft) break;
+          let farm = data.farms.farms[p.c.coord];
+          if (!data.commands.hasOwnProperty(p.c.coord)) data.commands[p.c.coord] = [];
+          if (data.commands[p.c.coord].length) continue; // already on the way
+          let arrival = serverTime + p.travel + Math.round(plan.counter / 5);
+          let capacity = templateA.capacity || 0;
+          let expected = Math.min(lootableAt(farm, arrival), capacity);
+          if (expected <= 0) continue;
+
+          plan.counter++;
+          origin.units = unitsLeft;
+          let event = { ts: arrival, cap: capacity };
+          data.commands[p.c.coord].push(event);
+          if (!plan.farms.hasOwnProperty(prop)) plan.farms[prop] = [];
+          plan.farms[prop].push({
+            origin: { coord: prop, name: origin.name, id: origin.id },
+            target: { coord: p.c.coord, id: farm.id },
+            farm: farm,
+            event: event,
+            fields: p.c.dis,
+            template: { name: 'a', id: templateA.id },
+            expected: expected,
+            capacity: capacity,
+            score: p.travel > 0 ? expected / ((2 * p.travel) / 3600) : expected,
+            fallback: false,
+            probe: true,
+            returnTime: arrival + p.travel,
+            arrival: arrival,
+            travel: p.travel,
+            points: farm.points || 0,
+            production: productionOf(farm),
+            scouted: false,
+            loot: { known: false, scouted: false, scoutAgeHours: null, isNew: true, full: false, ageMinutes: null },
+          });
+        }
+      }
+
+      if (plan.farms[prop])
+        plan.farms[prop].sort((a, b) => b.score - a.score || a.fields - b.fields);
     }
 
     return plan;
