@@ -22,8 +22,9 @@
 //    ein A, wird der schwächste andere A-Angriff dafür gestrichen, wenn die größere Beute das
 //    mehr als ausgleicht. Dörfer ohne Bericht bekommen immer erst A als Probe.
 //  - Laufende und gerade geplante Angriffe werden vom Vorrat abgezogen (bei nur geschätztem Vorrat
-//    gilt das Dorf danach als leer). Mehrere Angriffe auf ein Dorf im selben Durchlauf gibt es
-//    nur, wenn der Vorrat aus einem Spähbericht bekannt ist.
+//    gilt das Dorf danach als leer). Die Kapazität laufender Angriffe kommt aus den Einheitenspalten
+//    der Befehlsübersicht – auch für Angriffe von anderen Geräten oder von Hand. Mehrere Angriffe
+//    auf ein Dorf im selben Durchlauf gibt es nur, wenn der Vorrat aus einem Spähbericht bekannt ist.
 //  - Spähberichte (1 Request pro neuem Bericht, max. 5 pro Durchlauf) liefern Rohstoffe, Gebäude
 //    (Produktion, Versteck, Speicher) und Truppen. Dörfer mit Truppen werden gemieden. Wächst ein
 //    Dorf nach dem Spähen (Punkte steigen), wächst die Produktion im Modell mit.
@@ -41,7 +42,8 @@
 //    Feste Regeln stehen im Block RULES weiter unten.
 //  - Anfragen ans Spiel: höchstens 2 gleichzeitig, 250 ms Pause dazwischen, Fehlschläge werden
 //    erst nach 2 bzw. 5 s wiederholt; die Dorfliste der Welt wird 3 h zwischengespeichert. Das
-//    Spiel sperrt sonst zeitweise alle Anfragen ("Blockierte Anfrage").
+//    Spiel sperrt sonst zeitweise alle Anfragen ("Blockierte Anfrage"). Kommt die Sperrseite trotzdem,
+//    wird sie als Fehler behandelt (nichts gemerkt, klare Meldung statt leerer Tabelle).
 // Das Senden selbst ist unverändert: jede Farm braucht weiterhin einen Klick bzw. Enter.
 //
 // Hungarian translation provided by =Krumpli=
@@ -62,6 +64,16 @@ window.FarmGod.Library = (function () {
       lanes: 2,
       delayMs: 250,
       retryDelaysMs: [2000, 5000],
+      // Sperrseite ("Blockierte Anfrage") oder Login-Seite kommen mit HTTP 200.
+      // Sie zählen als Fehlschlag, sonst würden sie als leere Berichte /
+      // Übersichten verarbeitet und das Gedächtnis verfälschen.
+      isBlocked: function (body) {
+        if (typeof body !== 'string') return false;
+        return (
+          /Blockierte Anfrage|zu viele Anfragen|Blocked request|too many requests/i.test(body) ||
+          /<input[^>]+type=["']?password/i.test(body)
+        );
+      },
       init: function () {
         if (this.queues === null) {
           this.queues = this.queueLib.createQueues(this.lanes);
@@ -98,27 +110,28 @@ window.FarmGod.Library = (function () {
                   }
                 );
             } else {
+              let failed = function (args) {
+                item.attempts += 1;
+                if (
+                  item.attempts <
+                  twLib.queueLib.maxAttempts
+                ) {
+                  self.enqueue(item, true);
+                  let waits = twLib.retryDelaysMs;
+                  later(waits[Math.min(item.attempts - 1, waits.length - 1)] || 0);
+                } else {
+                  item.promise.reject.apply(null, args);
+                  later(twLib.delayMs);
+                }
+              };
               $[item.action](...item.arguments)
                 .done(function () {
+                  if (twLib.isBlocked(arguments[0])) return failed(['blocked']);
                   item.promise.resolve.apply(null, arguments);
                   later(twLib.delayMs);
                 })
                 .fail(function () {
-                  item.attempts += 1;
-                  if (
-                    item.attempts <
-                    twLib.queueLib.maxAttempts
-                  ) {
-                    self.enqueue(item, true);
-                    let waits = twLib.retryDelaysMs;
-                    later(waits[Math.min(item.attempts - 1, waits.length - 1)] || 0);
-                  } else {
-                    item.promise.reject.apply(
-                      null,
-                      arguments
-                    );
-                    later(twLib.delayMs);
-                  }
+                  failed(arguments);
                 });
             }
           };
@@ -629,6 +642,7 @@ window.FarmGod.Translation = (function () {
           'Alle farms voor het huidige dorp zijn reeds verstuurd!',
         sendError: 'Error: farm niet verstuurd!',
         loadError: 'Could not load the data (see console). Reload the page and try again.',
+        blocked: 'The game is blocking requests right now (too many requests). Wait a few minutes, then start the script again.',
       },
     },
     hu_HU: {
@@ -697,6 +711,7 @@ window.FarmGod.Translation = (function () {
         villageError: 'Minden farm kiment a jelenlegi falubÃ³l!',
         sendError: 'Hiba: Farm nemvolt elkÃ¼ldve!',
         loadError: 'Could not load the data (see console). Reload the page and try again.',
+        blocked: 'The game is blocking requests right now (too many requests). Wait a few minutes, then start the script again.',
       },
     },
     int: {
@@ -765,6 +780,7 @@ window.FarmGod.Translation = (function () {
           'All farms for the current village have been sent!',
         sendError: 'Error: farm not send!',
         loadError: 'Could not load the data (see console). Reload the page and try again.',
+        blocked: 'The game is blocking requests right now (too many requests). Wait a few minutes, then start the script again.',
       },
     },
     de_DE: {
@@ -834,6 +850,7 @@ window.FarmGod.Translation = (function () {
           'Alle Farmen für das aktuelle Dorf wurden bereits geschickt!',
         sendError: 'Fehler: Farm nicht geschickt!',
         loadError: 'Daten konnten nicht geladen werden (Details in der Konsole). Seite neu laden und nochmal starten.',
+        blocked: 'Das Spiel blockiert gerade Anfragen ("zu viele Anfragen"). Ein paar Minuten warten, dann das Skript neu starten.',
       },
     },
   };
@@ -1298,18 +1315,15 @@ window.FarmGod.Main = (function (Library, Translation) {
       /* ignore */
     }
     if (serverTime - last < RULES.backfillHours * 3600) return Promise.resolve(farms);
-    try {
-      localStorage.setItem(BACKFILL_KEY, JSON.stringify({ time: serverTime }));
-    } catch (e) {
-      /* ignore */
-    }
 
     let found = {};
+    let pagesLoaded = 0;
     let loadPage = (from, pagesLeft) => {
       if (pagesLeft <= 0) return Promise.resolve();
       let url = game_data.link_base_pure + 'report&mode=attack' + (from ? '&from=' + from : '');
       return twLib.get(url).then(
         (html) => {
+          pagesLoaded += 1;
           let list = parseReportList($(html), from);
           list.reports.forEach((r) => {
             if (!wanted[r.coord] || found[r.coord]) return;
@@ -1326,6 +1340,13 @@ window.FarmGod.Main = (function (Library, Translation) {
     };
 
     return loadPage(0, RULES.backfillPages).then(() => {
+      // nothing loaded (blocked / offline): try again next run
+      if (!pagesLoaded) return;
+      try {
+        localStorage.setItem(BACKFILL_KEY, JSON.stringify({ time: serverTime }));
+      } catch (e) {
+        /* ignore */
+      }
       let all = Object.values(found);
       let todo = all.slice(0, budget);
       // budget used up before every found report could be read: continue
@@ -1601,8 +1622,9 @@ window.FarmGod.Main = (function (Library, Translation) {
       })
       .catch((e) => {
         console.error('FarmGodSmart:', e);
+        let msg = e === 'blocked' ? t.messages.blocked : t.messages.loadError;
         $('.farmGodContent').html(
-          `<div class="vis farmGodContent" style="padding:10px;">FarmGodSmart: ${t.messages.loadError} <a href="#" class="farmGodSettings">${t.table.settings}</a></div>`
+          `<div class="vis farmGodContent" style="padding:10px;">FarmGodSmart: ${msg} <a href="#" class="farmGodSettings">${t.table.settings}</a></div>`
         );
         $('.farmGodSettings')
           .off('click')
@@ -1991,9 +2013,17 @@ window.FarmGod.Main = (function (Library, Translation) {
       return data;
     };
 
+    // Running attacks: arrival time and, if the overview shows the unit
+    // columns, the exact carry capacity (also for attacks sent from another
+    // device or by hand; the localStorage memory is only the fallback).
     let commandsProcessor = ($html) => {
-      $html
-        .find('#commands_table')
+      let $table = $html.find('#commands_table');
+      let unitCarry = lib.getUnitCarry();
+      let unitOrder = $table
+        .find('th img[src*="/unit/unit_"]')
+        .map((i, img) => ($(img).attr('src').match(/unit_([a-z]+)/) || [])[1])
+        .get();
+      $table
         .find('.row_a, .row_ax, .row_b, .row_bx')
         .map((i, el) => {
           let $el = $(el);
@@ -2006,13 +2036,20 @@ window.FarmGod.Main = (function (Library, Translation) {
           if (coord) {
             if (!data.commands.hasOwnProperty(coord))
               data.commands[coord] = [];
-            return data.commands[coord].push(
-              Math.round(
-                lib.timestampFromString(
-                  $el.find('td').eq(2).text().trim()
-                ) / 1000
-              )
+            let ts = Math.round(
+              lib.timestampFromString(
+                $el.find('td').eq(2).text().trim()
+              ) / 1000
             );
+            let $units = $el.find('td.unit-item');
+            if ($units.length && $units.length === unitOrder.length) {
+              let cap = 0;
+              $units.each((j, td) => {
+                cap += (parseInt($(td).text()) || 0) * (unitCarry[unitOrder[j]] || 0);
+              });
+              return data.commands[coord].push({ ts, cap });
+            }
+            return data.commands[coord].push(ts);
           }
         });
 

@@ -132,7 +132,7 @@ export function createEnv(opts = {}) {
     if (url.includes('get_config')) return $.parseXML(fixture('get_config.xml'));
     if (url.includes('village.txt')) return opts.villageTxt !== undefined ? opts.villageTxt : fixture('village.txt');
     if (url.includes('mode=combined')) return wrap(opts.combinedHtml || fixture('overview_combined.html'));
-    if (url.includes('mode=commands')) return wrap(fixture('overview_commands.html'));
+    if (url.includes('mode=commands')) return wrap(opts.commandsHtml || fixture('overview_commands.html'));
     if (url.includes('screen=report&mode=attack')) return wrap(opts.reportList || fixture('report_list_attack.html'));
     if (url.includes('screen=am_farm')) return wrap(farmPage);
     let m = url.match(/screen=report&mode=all&view=(\d+)/);

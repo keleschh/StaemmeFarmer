@@ -115,7 +115,7 @@ describe('getData (alle Seiten aus Fixtures)', () => {
     assert.deepEqual(plain(home.units), [0, 2, 0, 0, 6, 10, 0, 0]);
 
     assert.equal(data.commands['589|423'].length, 1);
-    assert.equal(data.commands['589|423'][0], Math.round(new Date(2026, 7, 29, 17, 22, 56, 152).getTime() / 1000));
+    assert.equal(data.commands['589|423'][0].ts, Math.round(new Date(2026, 7, 29, 17, 22, 56, 152).getTime() / 1000));
 
     assert.equal(data.points['593|423'], 45);
     assert.equal(data.points['592|424'], 626);

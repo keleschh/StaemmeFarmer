@@ -25,7 +25,8 @@ Automatisierung des Sendens, keine Timer, keine Hintergrundschleifen. (Skriptreg
 ## Aufbau von FarmGodSmart.js
 1. Kommentarblock oben: beschreibt das aktuelle Verhalten. Bei Änderungen mitpflegen.
 2. `window.FarmGod.Library`: HTTP-Queue (`twLib`: 2 Bahnen, 250 ms Pause je Anfrage, Retry erst nach
-   2 s/5 s – das Spiel sperrt bei zu vielen Anfragen, siehe "Blockierte Anfrage"), Einheitendaten (`/interface.php?func=get_unit_info`,
+   2 s/5 s – das Spiel sperrt bei zu vielen Anfragen, siehe "Blockierte Anfrage"; `twLib.isBlocked` erkennt
+   Sperr-/Login-Seite mit HTTP 200 und lehnt mit `'blocked'` ab → `runPlanning` zeigt `messages.blocked`), Einheitendaten (`/interface.php?func=get_unit_info`,
    gecacht in localStorage `FarmGodSmart_unitInfo`), Weltconfig (`get_config` → `FarmGodSmart_worldConfig`),
    Punkte→Produktion-Tabelle `PRODUCTION_BY_POINTS` (aus einer Simulation des zufälligen Barb-Wachstums),
    `parseReportTime` (Berichtszeit aus einer Farm-Assistent-Zeile).
@@ -50,7 +51,9 @@ Automatisierung des Sendens, keine Timer, keine Hintergrundschleifen. (Skriptreg
      `RULES.maxReportFetches` Berichte pro Lauf: Spähberichte zuerst, dann eigene Beuteberichte mit
      `sent`-Eintrag), `learnFromReports` (verarbeitet den jeweils letzten Bericht jedes Dorfes genau
      einmal; Teilbeute → `prodMin = prodMax = Beute/Stunden seit emptiedAt`).
-   - `getData`: lädt Dorfübersicht (Truppen), laufende Angriffe, alle Farm-Assistent-Seiten,
+   - `getData`: lädt Dorfübersicht (Truppen), laufende Angriffe (`commandsProcessor`: Ankunft + Kapazität
+     aus den 12 `td.unit-item` der Befehlsübersicht als `{ts, cap}`; ohne Einheitenspalten nur die
+     Ankunftszeit, dann Fallback auf `sent`/Vorlage A in `eventsOf`), alle Farm-Assistent-Seiten,
      `/map/village.txt` (Punkte aller Dörfer + graue Dörfer ohne Bericht bis Punktelimit; kompakt
      `RULES.villageListHours` = 3 h in `FarmGodSmart_villages` gecacht, bei Quota-Fehler ohne Cache).
    - `createPlanning`: Durchgang 1 verteilt Vorlage A nach "Beute pro Stunde Laufzeit";
@@ -109,8 +112,8 @@ Tooltip "Erspäht") heißt nur "letzter Bericht ist ein Spähbericht" – kein S
 Angriffe. Einzige Idee bleibt der Vergleich erwartete vs. tatsächliche Beute (Aufgabe 3).
 
 ### 5. Tests – **erledigt**, ausbauen bei Bedarf
-40 Tests in `test/` (Parser, getData, createPlanning, kompletter Ablauf, Backfill, Auswertung,
-Anfragen-Drosselung in `requests.test.js`). `setup.js` setzt `twLib.delayMs`/`retryDelaysMs` auf 0. Beim Erweitern beachten:
+49 Tests in `test/` (Parser, getData, createPlanning, kompletter Ablauf, Backfill, Auswertung,
+Anfragen-Drosselung `requests.test.js`, Sperrseite `blocked.test.js`, Befehlskapazität `commands.test.js`). `setup.js` setzt `twLib.delayMs`/`retryDelaysMs` auf 0. Beim Erweitern beachten:
 Seiten-HTML in ein `<div>` wrappen (`$(html).find(...)`), einzelne `<tr>` in `<table><tbody>`;
 Objekte aus dem jsdom-Fenster vor `deepEqual` mit `JSON.parse(JSON.stringify(x))` kopieren
 (anderer Realm); vor `getData` einmal `await tick()`, damit Einheiten-/Weltconfig gecacht sind.
@@ -120,6 +123,18 @@ Auslöser war die Spielmeldung "Blockierte Anfrage … zu viele Anfragen". Ein L
 höchstens ~15 Anfragen (3 Übersichten, Farm-Assistent-Seiten, ggf. village.txt, bis 5 Berichte,
 Backfill bis 5 Listenseiten) mit max. 2 gleichzeitig und 250 ms Abstand. Falls die Sperre trotzdem
 wiederkommt: `twLib.lanes` auf 1 bzw. `delayMs` hoch, `maxReportFetches`/`backfillPages` runter.
+Die Sperrseite selbst (HTTP 200 mit "Blockierte Anfrage") wird als Fehlschlag behandelt: kein `noScout`,
+kein Backfill-Stempel, keine leere Tabelle, sondern Meldung. Fixture dafür gibt es nicht (Text aus der
+Spielmeldung, synthetisch in `blocked.test.js`).
+
+### Mehrere Geräte / Regeln (Stand 29.08.2026)
+- Der Spieler nutzt das Skript auf 2 PCs + Handy. `localStorage` ist pro Gerät: Auswertung (`sent.expected`)
+  und Spähdaten-Cache sind getrennt; die Planung ist seit der Befehlskapazität geräteunabhängig.
+- Externe Speicher (Firebase o. ä.) sind keine Option: Skript ist öffentlich, und die Skriptbibliothek-Regeln
+  (support.innogames.com/kb/TribalWars/de_DE/6023) verbieten Anfragen an Drittanbieter. Spielinterne
+  Alternative wäre das Notizbuch (`screen=memo`), Größenlimit ungeklärt.
+- Seit April 2026 gibt es die Skriptbibliothek; nach der Übergangsphase sind Skripte von externen URLs
+  (auch GitHub Pages) auf neuen Welten unzulässig. Ob/wann das de259 betrifft, ist offen → Support-Ticket.
 
 ### 7. Kleinere Punkte
 - Ungenutzte Übersetzungs-Keys entfernen (distance, time, losses, maxloot, autoProduction,
