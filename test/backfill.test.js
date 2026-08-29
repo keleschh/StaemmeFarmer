@@ -74,6 +74,39 @@ describe('Alte Spähberichte nachladen', () => {
     assert.equal(env.window.requests.filter((u) => u.includes('view=1124841')).length, 0, '600|417 ist nicht im Farm-Assistenten, Bericht nicht geladen');
   });
 
+  test('Budget aufgebraucht -> Sperre wird nicht gesetzt, nächster Lauf macht weiter', async () => {
+    // zwei Dörfer ohne Gebäudedaten, beide mit Spähbericht in der Liste, Budget 1
+    const rows = rowFor600 + '\n' + rowFor600.replace(/99001/g, '99002').replace('(600|417)', '(588|425)');
+    const list = fixture('report_list_attack.html').replace('greift Barbarendorf (588|425) K45 an', 'späht Barbarendorf (588|425) K45')
+      .replace('graphic/command/farm.webp" title="Farmangriff"', 'graphic/command/spy.webp" title="Enthält Späher"');
+    const env = createEnv({ premium: false, rows, reports: Object.assign({}, reports, { 1124928: fixture('report_scout.html') }), reportList: list });
+    env.internals.RULES.maxReportFetches = 1;
+    await tick();
+    await env.internals.getData(0, false, false, true, 0);
+    assert.equal(env.window.requests.filter((u) => u.includes('screen=report&mode=all&view=')).length, 1);
+    assert.equal(JSON.parse(env.window.localStorage.getItem('FarmGodSmart_backfill')).time, 0);
+    // zweiter Lauf: sofort weiter, zweites Dorf wird geladen
+    env.window.requests.length = 0;
+    await env.internals.getData(0, false, false, true, 0);
+    assert.equal(env.window.requests.filter((u) => u.includes('mode=attack')).length, 1);
+    const h = JSON.parse(env.window.localStorage.getItem('FarmGodSmart_history'));
+    assert.ok(h['600|417'].buildings && h['588|425'].buildings, 'beide Dörfer haben jetzt Gebäudedaten');
+    assert.ok(JSON.parse(env.window.localStorage.getItem('FarmGodSmart_backfill')).time > 0);
+  });
+
+  test('Bericht ohne Gebäudedaten wird gemerkt und nicht nochmal geladen', async () => {
+    // 600|417 zeigt in der Liste auf einen Bericht, der keine Gebäude enthält
+    const env = createEnv({ premium: false, rows: rowFor600, reports: { 1124841: fixture('report_attack_full.html') } });
+    await tick();
+    await env.internals.getData(0, false, false, true, 0);
+    const h = JSON.parse(env.window.localStorage.getItem('FarmGodSmart_history'));
+    assert.deepEqual(plain(h['600|417'].noScout), [1124841]);
+    env.window.localStorage.setItem('FarmGodSmart_backfill', JSON.stringify({ time: 0 }));
+    env.window.requests.length = 0;
+    await env.internals.getData(0, false, false, true, 0);
+    assert.equal(env.window.requests.filter((u) => u.includes('view=1124841')).length, 0);
+  });
+
   test('Suche endet früher, wenn alle gesuchten Dörfer gefunden sind', async () => {
     const env = createEnv({ premium: false, rows: rowFor600, reports });
     await tick();

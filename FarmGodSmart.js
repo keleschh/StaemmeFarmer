@@ -1287,7 +1287,10 @@ window.FarmGod.Main = (function (Library, Translation) {
         (html) => {
           let list = parseReportList($(html), from);
           list.reports.forEach((r) => {
-            if (wanted[r.coord] && !found[r.coord]) found[r.coord] = r;
+            if (!wanted[r.coord] || found[r.coord]) return;
+            // reports already read without building data are not tried again
+            if (((history[r.coord] || {}).noScout || []).indexOf(r.reportId) >= 0) return;
+            found[r.coord] = r;
           });
           let allFound = Object.keys(wanted).every((c) => found[c]);
           if (list.nextFrom === null || allFound) return;
@@ -1298,15 +1301,30 @@ window.FarmGod.Main = (function (Library, Translation) {
     };
 
     return loadPage(0, RULES.backfillPages).then(() => {
-      let todo = Object.values(found).slice(0, budget);
+      let all = Object.values(found);
+      let todo = all.slice(0, budget);
+      // budget used up before every found report could be read: let the
+      // next run continue right away instead of waiting backfillHours
+      if (all.length > budget) {
+        try {
+          localStorage.setItem(BACKFILL_KEY, JSON.stringify({ time: 0 }));
+        } catch (e) {
+          /* ignore */
+        }
+      }
       return Promise.all(
         todo.map((r) =>
           twLib.get(game_data.link_base_pure + 'report&mode=all&view=' + r.reportId).then(
             (html) => {
               let parsed = parseScoutReport($(html));
-              if (!parsed.buildings) return;
               let hist = loadHistory();
               let h = hist[r.coord] || {};
+              if (!parsed.buildings) {
+                h.noScout = (h.noScout || []).concat([r.reportId]).slice(-5);
+                hist[r.coord] = h;
+                saveHistory(hist);
+                return;
+              }
               h.buildings = Object.assign(h.buildings || {}, parsed.buildings);
               h.scoutReportId = r.reportId;
               h.scoutTime = r.time;
