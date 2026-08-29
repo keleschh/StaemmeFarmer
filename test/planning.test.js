@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { createEnv, tick, serverTimeSeconds } from './setup.js';
+import { createEnv, fixture, tick, serverTimeSeconds } from './setup.js';
 
 const plain = (x) => JSON.parse(JSON.stringify(x));
 
@@ -97,5 +97,42 @@ describe('Kompletter Ablauf: init() -> Tabelle -> Klick', () => {
     await tick(50);
     assert.equal(env.window.messages.error.length, 1);
     assert.equal(env.$('.farmGod_icon').length, 0);
+  });
+});
+
+describe('Regel 2a: perB-1 A-Angriffe + schwächster anderer Angriff -> ein B', () => {
+  const withTroops = (lk) => fixture('overview_combined.html').replace('<td class="unit-item">10</td>', `<td class="unit-item">${lk}</td>`);
+
+  test('12 LKav: 4×A auf das volle gespähte Dorf werden mit dem schwächsten A zu einem B', async () => {
+    const env = createEnv({ premium: false, combinedHtml: withTroops(12) });
+    await tick();
+    const data = await env.internals.getData(0, true, false, true, 500);
+    const plan = env.internals.createPlanning({}, data);
+    const rows = plain(plan.farms['592|424'].map((r) => `${r.target.coord}:${r.template.name}`).sort());
+    // vorher: 594|423:a (65), 589|423:a (72), 4× 587|430:a (640) = 777
+    // nachher: 589|423:a (72) + 587|430:b (800) = 872, ein Klick weniger
+    assert.deepEqual(rows, ['587|430:b', '589|423:a']);
+    assert.equal(plan.counter, 2);
+    const b = plan.farms['592|424'].find((r) => r.template.name == 'b');
+    assert.equal(b.template.id, 1126);
+    assert.equal(b.capacity, 800);
+    assert.equal(Math.round(b.expected), 800);
+    // alle 12 LKav verplant, keine doppelten Kommandos übrig
+    assert.equal(data.commands['587|430'].length, 1);
+    assert.equal(data.commands['594|423'].length, 0);
+  });
+
+  test('Kein Zusammenlegen, wenn der Gewinn kleiner als der weggefallene Angriff wäre', async () => {
+    // Spähbericht des entfernten Dorfes jünger -> Vorrat bei Ankunft nur ~700:
+    // B brächte 60 mehr als 4×A, der schwächste andere Angriff bringt 65
+    const rows = ['farm_row_scouted.html', 'farm_row_full_loot.html', 'farm_row_partial_loot.html'].map(fixture).join('\n') +
+      fixture('farm_row_yesterday.html').replace('gestern um 22:33:33', 'heute um 11:30:00');
+    const env = createEnv({ premium: false, rows, combinedHtml: withTroops(12) });
+    await tick();
+    const data = await env.internals.getData(0, true, false, true, 500);
+    const plan = env.internals.createPlanning({}, data);
+    const rowsOut = plain(plan.farms['592|424'].map((r) => `${r.target.coord}:${r.template.name}`).sort());
+    assert.deepEqual(rowsOut, ['587|430:a', '587|430:a', '587|430:a', '587|430:a', '589|423:a', '594|423:a']);
+    assert.equal(plan.counter, 6);
   });
 });

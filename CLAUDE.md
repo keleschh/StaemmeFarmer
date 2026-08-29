@@ -34,15 +34,21 @@ Automatisierung des Sendens, keine Timer, keine Hintergrundschleifen. (Skriptreg
    - `RULES`: alle festen Zahlen (Mindestscore, B-Schwelle, Vorrat-Annahme, Probe-Radius …).
    - Gedächtnis pro Dorf in localStorage `FarmGodSmart_history`:
      `{ base:{time,raw:[holz,lehm,eisen]}, buildings, scoutTime, scoutPoints, prodMin, prodMax,
-        emptiedAt, lastReport, lastCap, sent:[{arrival,capacity}], troops, noScout }`.
+        emptiedAt, lastReport, lastCap, sent:[{arrival,capacity,expected}], troops, noScout }`.
+   - Auswertung in localStorage `FarmGodSmart_stats`: Liste `{time, coord, expected, actual, capacity, full}`
+     (max. `RULES.maxStats`), `statsSummary()` → Zeile über der Tabelle.
    - Rohstoffmodell: `buildModel` (Produktion/Versteck/Speicher je Rohstoff, exakt aus gespähten
      Gebäuden, sonst aus Punkten), `forecastRaw`, `lootableOf`, `takeFrom`, `baseOf`.
-   - `parseScoutReport`, `fetchNewScoutReports` (max. `RULES.maxReportFetches` Berichte pro Lauf),
-     `learnFromReports` (verarbeitet den jeweils letzten Bericht jedes Dorfes genau einmal).
+   - `parseScoutReport`, `parseHaul` (`#attack_results`), `fetchNewScoutReports` (max.
+     `RULES.maxReportFetches` Berichte pro Lauf: Spähberichte zuerst, dann eigene Beuteberichte mit
+     `sent`-Eintrag), `learnFromReports` (verarbeitet den jeweils letzten Bericht jedes Dorfes genau
+     einmal; Teilbeute → `prodMin = prodMax = Beute/Stunden seit emptiedAt`).
    - `getData`: lädt Dorfübersicht (Truppen), laufende Angriffe, alle Farm-Assistent-Seiten,
      `/map/village.txt` (Punkte aller Dörfer + graue Dörfer ohne Bericht bis Punktelimit).
    - `createPlanning`: Durchgang 1 verteilt Vorlage A nach "Beute pro Stunde Laufzeit";
-     Durchgang 2 legt mehrere A auf ein gespähtes Dorf zu B zusammen, vergrößert A→B auf vollen
+     Durchgang 2 legt mehrere A auf ein gespähtes Dorf zu B zusammen (auch bei perB−1 Angriffen,
+     wenn der schwächste andere A-Angriff gestrichen werden kann und der Gewinn ≥ dessen Beute
+     ist), vergrößert A→B auf vollen
      Dörfern, macht neue B-Angriffe auf entfernte volle Dörfer, schickt übrige Truppen als Probe
      auf Dörfer ohne Bericht (nächste zuerst, bis `probeMaxTravelHours`).
    - `sendFarm`: sendet über den Farm-Assistent-Endpoint, merkt sich den Angriff (`rememberSent`).
@@ -75,14 +81,16 @@ A = 2 LKav, B = 10 LKav), daher gibt es noch keinen solchen Bericht. Sobald eine
 Beute (`#attack_results`) + "Erspähte Rohstoffe" vergleichen, Fixture ablegen, ggf. auf "vorher"
 umstellen (dann `takeFrom` anwenden).
 
-### 3. Kalibrierung der RULES anhand echter Beute
+### 3. Kalibrierung der RULES anhand echter Beute – Auswertung eingebaut, Konstanten noch offen
 Die Konstanten `minScorePerSpeed` (60), `bFillRatio` (0.75), `untouchedHours` (36),
 `probeMaxTravelHours` (3), `fallbackMinFill` (0.1) sind Schätzwerte.
-Vorschlag: optionale Auswertung einbauen, die eigene Angriffsberichte lädt (Beute "X/Y" im
-`#attack_results`-Bereich), pro Angriff *erwartete* (steht in `sent`, um `expected` erweitern)
-vs. *tatsächliche* Beute speichert und eine Statistikzeile zeigt (mittlere Füllung,
-Schätzfehler). Danach Konstanten anpassen. Request-Budget beachten (max. 10 Berichte pro Lauf,
-gemeinsam mit den Spähberichten).
+Eingebaut (29.08.2026): `sent` merkt sich `expected`; passende Angriffsberichte werden geladen
+(`parseHaul`), erwartet/tatsächlich landet in `FarmGodSmart_stats`, die Tabelle zeigt
+"Auswertung: N Angriffe · Ø x % voll · Schätzung Ø ±y % · Fehler Ø z %". Teilbeute liefert die exakte
+Produktion seit dem letzten Leerräumen. Die 2a-Regel (perB−1 + schwächster Angriff) ist drin.
+Offen: nach ein paar Tagen Statistik anschauen (`localStorage.FarmGodSmart_stats` oder die Zeile)
+und danach die Konstanten anpassen. Bei "Schätzung Ø deutlich > 0" ist `untouchedHours` zu hoch
+oder die Punkte-Produktion zu optimistisch; bei niedrigem "Ø voll" bei B-Angriffen `bFillRatio` hoch.
 
 ### 4. Andere Spieler farmen dasselbe Dorf
 Nicht erkennbar; das Skript überschätzt dann. Geklärt: der blaue Punkt (`dots/blue.webp`,

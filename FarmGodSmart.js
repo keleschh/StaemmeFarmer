@@ -18,7 +18,9 @@
 //    beste Dorf geschickt, damit die Truppen nie sinnlos rennen, aber auch nicht ganz stehen.
 //  - Erst werden die Truppen als kleine Vorlage A auf möglichst viele Dörfer verteilt. Nur was
 //    dann noch zu Hause stünde, vergrößert die Angriffe auf die vollsten Dörfer zu Vorlage B.
-//    Dörfer ohne Bericht bekommen immer erst A als Probe.
+//    Mehrere A auf ein gespähtes volles Dorf werden zu einem B zusammengelegt; fehlt dafür genau
+//    ein A, wird der schwächste andere A-Angriff dafür gestrichen, wenn die größere Beute das
+//    mehr als ausgleicht. Dörfer ohne Bericht bekommen immer erst A als Probe.
 //  - Laufende und gerade geplante Angriffe werden vom Vorrat abgezogen (bei nur geschätztem Vorrat
 //    gilt das Dorf danach als leer). Mehrere Angriffe auf ein Dorf im selben Durchlauf gibt es
 //    nur, wenn der Vorrat aus einem Spähbericht bekannt ist.
@@ -27,6 +29,11 @@
 //    Dorf nach dem Spähen (Punkte steigen), wächst die Produktion im Modell mit.
 //  - Barbaren-/Bonusdörfer ohne Bericht können mit eingeplant werden (Punktelimit als Sicherung
 //    gegen ehemalige Spielerdörfer mit Resttruppen). Im Original nur auf dem NL-Markt.
+//  - Auswertung: zu jedem geschickten Angriff wird die erwartete Beute gemerkt. Kommt der Bericht
+//    dazu (1 Request pro Bericht, gemeinsames Budget mit den Spähberichten), wird die tatsächliche
+//    Beute daneben gespeichert; die Tabelle zeigt oben "Auswertung: N Angriffe · Ø x % voll ·
+//    Schätzung Ø +y %". Eine Teilbeute verrät außerdem die exakte Produktion seit dem letzten
+//    Leerräumen und wird so ins Modell übernommen.
 //  - Gedächtnis pro Dorf im Browser (localStorage), 14 Tage nach dem letzten Bericht gelöscht.
 //    Feste Regeln stehen im Block RULES weiter unten.
 // Das Senden selbst ist unverändert: jede Farm braucht weiterhin einen Klick bzw. Enter.
@@ -591,6 +598,8 @@ window.FarmGod.Translation = (function () {
         totalLoot: 'expected loot',
         troopsBack: 'troops back from',
         probeTag: 'probe',
+        stats: 'Evaluation: %n attacks · avg %fill % full · estimate avg %bias % · error avg %error %',
+        statsTitle: 'Own attack reports whose expected loot was remembered. full = actual loot in % of the carry capacity; estimate = expected minus actual in % of capacity (plus = too optimistic); error = its absolute value.',
         goTo: 'Ga naar',
       },
       messages: {
@@ -658,6 +667,8 @@ window.FarmGod.Translation = (function () {
         totalLoot: 'expected loot',
         troopsBack: 'troops back from',
         probeTag: 'probe',
+        stats: 'Evaluation: %n attacks · avg %fill % full · estimate avg %bias % · error avg %error %',
+        statsTitle: 'Own attack reports whose expected loot was remembered. full = actual loot in % of the carry capacity; estimate = expected minus actual in % of capacity (plus = too optimistic); error = its absolute value.',
         goTo: 'Go to',
       },
       messages: {
@@ -723,6 +734,8 @@ window.FarmGod.Translation = (function () {
         totalLoot: 'expected loot',
         troopsBack: 'troops back from',
         probeTag: 'probe',
+        stats: 'Evaluation: %n attacks · avg %fill % full · estimate avg %bias % · error avg %error %',
+        statsTitle: 'Own attack reports whose expected loot was remembered. full = actual loot in % of the carry capacity; estimate = expected minus actual in % of capacity (plus = too optimistic); error = its absolute value.',
         goTo: 'Go to',
       },
       messages: {
@@ -790,6 +803,9 @@ window.FarmGod.Translation = (function () {
         troopsBack: 'Truppen zurück ab',
         probeTag: 'Probe',
         goTo: 'Gehe zu',
+        stats: 'Auswertung: %n Angriffe · Ø %fill % voll · Schätzung Ø %bias % · Fehler Ø %error %',
+        statsTitle:
+          'Eigene Angriffsberichte, zu denen die erwartete Beute gemerkt wurde. "voll" = tatsächliche Beute in Prozent der Tragekapazität. "Schätzung" = erwartete minus tatsächliche Beute in Prozent der Kapazität (plus = zu optimistisch), "Fehler" = Betrag davon.',
       },
       messages: {
         villageChanged: 'Dorf erfolgreich gewechselt!',
@@ -843,8 +859,11 @@ window.FarmGod.Main = (function (Library, Translation) {
     // Ein Dorf, das wir noch nie leer gesehen haben, hat vermutlich so viele
     // Stunden Produktion angesammelt (grobe Annahme für den Vorrat).
     untouchedHours: 36,
-    // Wie viele neue Spähberichte pro Durchlauf höchstens geladen werden.
+    // Wie viele neue Berichte (Späh- und eigene Beuteberichte) pro Durchlauf
+    // höchstens geladen werden. Spähberichte zuerst.
     maxReportFetches: 10,
+    // So viele ausgewertete Angriffe (erwartet vs. tatsächlich) werden behalten.
+    maxStats: 300,
     // Truppen, die nach der Planung zu Hause stünden, gehen als Probe (Vorlage A)
     // auf Dörfer ohne Bericht, nächste zuerst, bis zu so vielen Stunden Anmarsch.
     probeMaxTravelHours: 3,
@@ -882,14 +901,63 @@ window.FarmGod.Main = (function (Library, Translation) {
   const sentListOf = (h) =>
     Array.isArray(h.sent) ? h.sent : h.sent ? [h.sent] : [];
 
-  const rememberSent = function (coord, arrival, capacity) {
+  const rememberSent = function (coord, arrival, capacity, expected) {
     if (!coord) return;
     let history = loadHistory();
     if (!history[coord]) history[coord] = {};
     let list = sentListOf(history[coord]);
-    list.push({ arrival: arrival, capacity: capacity });
+    let entry = { arrival: arrival, capacity: capacity };
+    if (typeof expected === 'number' && !isNaN(expected)) entry.expected = expected;
+    list.push(entry);
     history[coord].sent = list.slice(-20);
     saveHistory(history);
+  };
+
+  /**** Auswertung: erwartete vs. tatsächliche Beute ****/
+  const STATS_KEY = 'FarmGodSmart_stats';
+
+  const loadStats = function () {
+    try {
+      let list = JSON.parse(localStorage.getItem(STATS_KEY));
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      return [];
+    }
+  };
+
+  const recordStat = function (stat) {
+    let list = loadStats();
+    if (list.some((x) => x.coord == stat.coord && x.time == stat.time)) return;
+    list.push(stat);
+    try {
+      localStorage.setItem(STATS_KEY, JSON.stringify(list.slice(-RULES.maxStats)));
+    } catch (e) {
+      /* optional */
+    }
+  };
+
+  // n, average fill of the capacity (%), average estimate error
+  // (expected - actual, in % of capacity; positive = estimate too high) and
+  // the average absolute error
+  const statsSummary = function () {
+    let list = loadStats().filter((x) => x.capacity > 0);
+    if (!list.length) return { n: 0, fill: 0, bias: 0, error: 0 };
+    let fill = 0;
+    let bias = 0;
+    let error = 0;
+    list.forEach((x) => {
+      let d = (x.expected - x.actual) / x.capacity;
+      fill += x.actual / x.capacity;
+      bias += d;
+      error += Math.abs(d);
+    });
+    let n = list.length;
+    return {
+      n: n,
+      fill: Math.round((100 * fill) / n),
+      bias: Math.round((100 * bias) / n),
+      error: Math.round((100 * error) / n),
+    };
   };
 
   /**** Rohstoff-Modell pro Dorf ****/
@@ -1065,19 +1133,53 @@ window.FarmGod.Main = (function (Library, Translation) {
     return result;
   };
 
-  // loads reports that may contain scout info and are not known yet
+  // reads the haul of an own attack report: "Beute: 280 258 262  800/800"
+  const parseHaul = function ($html) {
+    let $r = $html.find('#attack_results');
+    if (!$r.length) return null;
+    let loot = [];
+    RES.forEach((k) => {
+      let $icon = $r.find(`.icon.header.${k}`).first();
+      if (!$icon.length) return;
+      let node = $icon[0].nextSibling;
+      while (node && !/\d/.test(node.textContent || '')) node = node.nextSibling;
+      let n = node ? parseInt((node.textContent || '').replace(/[^\d]/g, '')) : NaN;
+      if (!isNaN(n)) loot.push(n);
+    });
+    let m = $r.text().replace(/\./g, '').match(/(\d+)\s*\/\s*(\d+)/);
+    if (!m) return null;
+    return {
+      loot: loot.length === 3 ? loot : null,
+      carried: parseInt(m[1]),
+      capacity: parseInt(m[2]),
+    };
+  };
+
+  // loads reports that are not known yet: scout reports (resources,
+  // buildings, troops) first, then own attack reports whose expected loot
+  // was remembered when they were sent (evaluation + exact production)
   const fetchNewScoutReports = function (farms) {
     let history = loadHistory();
-    let todo = [];
+    let scoutTodo = [];
+    let haulTodo = [];
     for (let coord in farms) {
       let f = farms[coord];
       if (!f.report_id) continue;
       let h = history[coord] || {};
-      if (h.scoutReportId == f.report_id) continue;
-      if ((h.noScout || []).indexOf(f.report_id) >= 0) continue;
-      if (f.has_res_info || !f.has_loot_info) todo.push(coord);
+      let known = h.scoutReportId == f.report_id || (h.noScout || []).indexOf(f.report_id) >= 0;
+      if (!known && (f.has_res_info || !f.has_loot_info)) {
+        scoutTodo.push(coord);
+      } else if (
+        f.has_loot_info &&
+        f.report_time > (h.lastReport || 0) &&
+        sentListOf(h).some(
+          (x) => typeof x.expected === 'number' && Math.abs(x.arrival - f.report_time) < 900
+        )
+      ) {
+        haulTodo.push(coord);
+      }
     }
-    todo = todo.slice(0, RULES.maxReportFetches);
+    let todo = scoutTodo.concat(haulTodo).slice(0, RULES.maxReportFetches);
     if (!todo.length) return Promise.resolve(farms);
 
     return Promise.all(
@@ -1086,13 +1188,16 @@ window.FarmGod.Main = (function (Library, Translation) {
           .get(game_data.link_base_pure + 'report&mode=all&view=' + farms[coord].report_id)
           .then(
             (html) => {
-              let parsed = parseScoutReport($(html));
+              let $html = $(html);
+              let parsed = parseScoutReport($html);
               farms[coord].scout = {
                 reportId: farms[coord].report_id,
                 res: parsed.res,
                 buildings: parsed.buildings,
                 troops: parsed.troops,
               };
+              let haul = parseHaul($html);
+              if (haul) farms[coord].haul = haul;
             },
             () => {}
           )
@@ -1145,6 +1250,20 @@ window.FarmGod.Main = (function (Library, Translation) {
             ? landed.pop()
             : null;
         let capSent = own ? own.capacity : 0;
+        let haul = farm.has_loot_info && farm.haul ? farm.haul : null;
+
+        // evaluation: what we expected when sending vs. what came back
+        if (own && haul && typeof own.expected === 'number') {
+          recordStat({
+            time: T,
+            coord: coord,
+            expected: own.expected,
+            actual: haul.carried,
+            capacity: own.capacity || haul.capacity,
+            full: !!farm.max_loot,
+          });
+          if (!capSent) capSent = haul.capacity;
+        }
 
         let cur = baseOf(h, T, m);
         landed.forEach((x) => {
@@ -1166,7 +1285,12 @@ window.FarmGod.Main = (function (Library, Translation) {
             if (hours >= 0.25) {
               let rate = capSent / hours;
               if (farm.max_loot) h.prodMin = Math.max(h.prodMin || 0, rate);
-              else if (!others) h.prodMax = Math.min(h.prodMax || Infinity, rate);
+              else if (!others && haul) {
+                // a partial haul took everything above the hiding place:
+                // the haul is exactly the production since it was emptied
+                h.prodMin = haul.carried / hours;
+                h.prodMax = haul.carried / hours;
+              } else if (!others) h.prodMax = Math.min(h.prodMax || Infinity, rate);
               if (h.prodMin && h.prodMax && h.prodMin > h.prodMax) {
                 if (farm.max_loot) h.prodMax = h.prodMin;
                 else h.prodMin = h.prodMax;
@@ -1178,7 +1302,9 @@ window.FarmGod.Main = (function (Library, Translation) {
             // the haul; otherwise subtract the haul from the forecast
             h.base = {
               time: T,
-              raw: scout && scout.res ? rawAtT : takeFrom(m, rawAtT, capSent || capacityA),
+              raw: scout && scout.res
+                ? rawAtT
+                : takeFrom(m, rawAtT, haul ? haul.carried : capSent || capacityA),
             };
           } else {
             h.base = { time: T, raw: rawAtT.map((v, i) => Math.min(v, m.hidden[i])) };
@@ -1469,10 +1595,21 @@ window.FarmGod.Main = (function (Library, Translation) {
         ? `${plan.counter} ${t.table.attacks} · ~${Math.round(totalLoot)} ${t.table.totalLoot} · ${t.table.troopsBack} ${formatTime(firstBack)}`
         : t.table.noFarmsPlanned;
 
+    let stats = statsSummary();
+    let statsLine =
+      stats.n > 0
+        ? `<div style="text-align:center;padding:0 6px 2px 6px;font-size:10px;color:#444;" title="${t.table.statsTitle}">${t.table.stats
+            .replace('%n', stats.n)
+            .replace('%fill', stats.fill)
+            .replace('%bias', (stats.bias > 0 ? '+' : '') + stats.bias)
+            .replace('%error', stats.error)}</div>`
+        : '';
+
     let html = `<div class="vis farmGodContent">
                 <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 6px;">
                   <b>FarmGod</b><span>${summary}</span><a href="#" class="farmGodSettings">${t.table.settings}</a>
                 </div>
+                ${statsLine}
                 ${warningHtml()}
                 <table class="vis" width="100%">
                 <tr><div id="FarmGodProgessbar" class="progress-bar live-progress-bar progress-bar-alive" style="width:98%;margin:5px auto;"><div style="background: rgb(146, 194, 0);"></div><span class="label" style="margin-top:0px;"></span></div></tr>
@@ -1502,6 +1639,7 @@ window.FarmGod.Main = (function (Library, Translation) {
             }" data-target="${val.target.id}" data-template="${val.template.id
             }" data-coord="${val.target.coord}" data-travel="${val.travel
             }" data-capacity="${val.capacity
+            }" data-expected="${Math.round(val.expected)
             }" class="farmGod_icon farm_icon farm_icon_${val.template.name
             }" style="margin:auto;"></a></td>
                   </tr>`;
@@ -2065,6 +2203,15 @@ window.FarmGod.Main = (function (Library, Translation) {
             u > 0 ? (templateA.units[i] > 0 ? Math.ceil(u / templateA.units[i]) : Infinity) : 0
           )
         );
+        const dropEntry = (entry) => {
+          let idx = entries().indexOf(entry);
+          if (idx >= 0) entries().splice(idx, 1);
+          let cmds = data.commands[entry.target.coord] || [];
+          let ci = cmds.indexOf(entry.event);
+          if (ci >= 0) cmds.splice(ci, 1);
+          origin.units = origin.units.map((u, i) => u + (templateA.units[i] || 0));
+          plan.counter--;
+        };
         if (perB > 1 && isFinite(perB)) {
           while (true) {
             let groups = {};
@@ -2073,21 +2220,35 @@ window.FarmGod.Main = (function (Library, Translation) {
               (groups[entry.target.coord] = groups[entry.target.coord] || []).push(entry);
             });
             let group = Object.values(groups).find((g) => g.length >= perB);
+            let donor = null;
+            if (!group && perB > 2) {
+              // one A short of a B: take the troops from the weakest other A
+              // attack if the bigger haul more than makes up for it
+              let short = Object.values(groups)
+                .filter((g) => g.length == perB - 1)
+                .map((g) => ({ g, stock: stockBefore(g[0]) }))
+                .filter((o) => o.stock >= templateB.capacity * RULES.bFillRatio)
+                .sort((a, b) => b.stock - a.stock)[0];
+              if (short) {
+                let gain =
+                  Math.min(short.stock, templateB.capacity) -
+                  (perB - 1) * templateA.capacity;
+                let weakest = entries()
+                  .filter((e) => e.template.name == 'a' && short.g.indexOf(e) < 0)
+                  .sort((a, b) => a.expected - b.expected || b.travel - a.travel)[0];
+                if (weakest && gain >= weakest.expected) {
+                  group = short.g;
+                  donor = weakest;
+                }
+              }
+            }
             if (!group) break;
             group.sort((a, b) => a.arrival - b.arrival);
             let first = group[0];
             let stock = stockBefore(first);
             if (stock < templateB.capacity * RULES.bFillRatio) break;
-            let removed = group.slice(1, perB);
-            removed.forEach((entry) => {
-              let idx = entries().indexOf(entry);
-              if (idx >= 0) entries().splice(idx, 1);
-              let cmds = data.commands[entry.target.coord] || [];
-              let ci = cmds.indexOf(entry.event);
-              if (ci >= 0) cmds.splice(ci, 1);
-              origin.units = origin.units.map((u, i) => u + (templateA.units[i] || 0));
-              plan.counter--;
-            });
+            if (donor) dropEntry(donor);
+            group.slice(1).forEach(dropEntry);
             origin.units = origin.units.map((u, i) => u + (templateA.units[i] || 0) - templateB.units[i]);
             makeB(first, stock);
           }
@@ -2263,7 +2424,8 @@ window.FarmGod.Main = (function (Library, Translation) {
             $this.data('coord'),
             Math.round(lib.getCurrentServerTime() / 1000) +
               (parseInt($this.data('travel')) || 0),
-            parseInt($this.data('capacity')) || 0
+            parseInt($this.data('capacity')) || 0,
+            parseInt($this.data('expected'))
           );
           $pb.data('current', $pb.data('current') + 1);
           UI.updateProgressBar(
@@ -2306,6 +2468,9 @@ window.FarmGod.Main = (function (Library, Translation) {
       loadHistory,
       saveHistory,
       rememberSent,
+      parseHaul,
+      loadStats,
+      statsSummary,
     },
   };
 })(window.FarmGod.Library, window.FarmGod.Translation);

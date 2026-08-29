@@ -29,6 +29,7 @@ export const SERVER_TIME = '17:16:18';
  * opts.history: initial localStorage history object
  * opts.settings: options object (null -> first start dialog would show)
  * opts.premium: false -> init() shows the error message and does nothing
+ * opts.combinedHtml: override for the village overview (e.g. other troop counts)
  */
 export function createEnv(opts = {}) {
   const serverDate = opts.serverDate || SERVER_DATE;
@@ -130,7 +131,7 @@ export function createEnv(opts = {}) {
     if (url.includes('get_unit_info')) return $.parseXML(fixture('get_unit_info.xml'));
     if (url.includes('get_config')) return $.parseXML(fixture('get_config.xml'));
     if (url.includes('village.txt')) return opts.villageTxt !== undefined ? opts.villageTxt : fixture('village.txt');
-    if (url.includes('mode=combined')) return wrap(fixture('overview_combined.html'));
+    if (url.includes('mode=combined')) return wrap(opts.combinedHtml || fixture('overview_combined.html'));
     if (url.includes('mode=commands')) return wrap(fixture('overview_commands.html'));
     if (url.includes('screen=am_farm')) return wrap(farmPage);
     let m = url.match(/screen=report&mode=all&view=(\d+)/);
