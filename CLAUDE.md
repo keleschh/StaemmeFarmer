@@ -56,7 +56,9 @@ Automatisierung des Sendens, keine Timer, keine Hintergrundschleifen. (Skriptreg
      Ankunftszeit, dann Fallback auf `sent`/Vorlage A in `eventsOf`), alle Farm-Assistent-Seiten,
      `/map/village.txt` (Punkte aller Dörfer + graue Dörfer ohne Bericht bis Punktelimit; kompakt
      `RULES.villageListHours` = 3 h in `FarmGodSmart_villages` gecacht, bei Quota-Fehler ohne Cache).
-   - `createPlanning`: Durchgang 1 verteilt Vorlage A nach "Beute pro Stunde Laufzeit";
+   - `createPlanning`: alle Herkunftsdörfer gemeinsam (`origins` mit je eigenen `candidates`; Durchgang 1,
+     2c und 2d wählen global das beste (Dorf, Ziel)-Paar, 2a/2b arbeiten pro Dorf auf dessen Einträgen;
+     am Ende `expected` aller Einträge neu berechnet). Durchgang 1 verteilt Vorlage A nach "Beute pro Stunde Laufzeit";
      Durchgang 2 legt mehrere A auf ein gespähtes Dorf zu B zusammen (auch bei perB−1 Angriffen,
      wenn der schwächste andere A-Angriff gestrichen werden kann und der Gewinn ≥ dessen Beute
      ist), vergrößert A→B auf vollen
@@ -112,8 +114,9 @@ Tooltip "Erspäht") heißt nur "letzter Bericht ist ein Spähbericht" – kein S
 Angriffe. Einzige Idee bleibt der Vergleich erwartete vs. tatsächliche Beute (Aufgabe 3).
 
 ### 5. Tests – **erledigt**, ausbauen bei Bedarf
-49 Tests in `test/` (Parser, getData, createPlanning, kompletter Ablauf, Backfill, Auswertung,
-Anfragen-Drosselung `requests.test.js`, Sperrseite `blocked.test.js`, Befehlskapazität `commands.test.js`). `setup.js` setzt `twLib.delayMs`/`retryDelaysMs` auf 0. Beim Erweitern beachten:
+52 Tests in `test/` (Parser, getData, createPlanning, kompletter Ablauf, Backfill, Auswertung,
+Anfragen-Drosselung `requests.test.js`, Sperrseite `blocked.test.js`, Befehlskapazität `commands.test.js`,
+mehrere Herkunftsdörfer in `planning.test.js` – zweites Dorf per `twoVillages()` aus der Übersichtszeile geklont). `setup.js` setzt `twLib.delayMs`/`retryDelaysMs` auf 0. Beim Erweitern beachten:
 Seiten-HTML in ein `<div>` wrappen (`$(html).find(...)`), einzelne `<tr>` in `<table><tbody>`;
 Objekte aus dem jsdom-Fenster vor `deepEqual` mit `JSON.parse(JSON.stringify(x))` kopieren
 (anderer Realm); vor `getData` einmal `await tick()`, damit Einheiten-/Weltconfig gecacht sind.
@@ -140,8 +143,6 @@ Spielmeldung, synthetisch in `blocked.test.js`).
 - Ungenutzte Übersetzungs-Keys entfernen (distance, time, losses, maxloot, autoProduction,
   production, minLoot, fallback*, templateFallback, points, score); Hungarian-Strings sind
   doppelt kodiert (Mojibake) – entweder reparieren oder den Block entfernen.
-- Mehrere Herkunftsdörfer: Zuweisung läuft pro Dorf nacheinander (erstes Dorf greift sich die
-  besten Ziele). Für später: globale Zuweisung über alle Herkunftsdörfer.
 - Bonusdörfer: der Produktionsbonus wird nicht modelliert (nur Punkte). Spähen korrigiert das.
 - Manuelle Angriffe (nicht aus der Tabelle) haben kein `sent`-Eintrag → daraus wird keine
   Produktionsgrenze gelernt. Akzeptiert.

@@ -136,3 +136,64 @@ describe('Regel 2a: perB-1 A-Angriffe + schwächster anderer Angriff -> ein B', 
     assert.equal(plan.counter, 6);
   });
 });
+
+describe('Mehrere Herkunftsdörfer: globale Zuweisung', () => {
+  // zweites Dorf [002] (592|416), 8 Felder nördlich, steht in der Übersicht VOR [001]
+  const twoVillages = (lk) => {
+    const html = fixture('overview_combined.html').replace('<td class="unit-item">10</td>', `<td class="unit-item">${lk}</td>`);
+    const start = html.indexOf('<tr class="nowrap selected  row_a">');
+    const end = html.indexOf('</tr>', start) + 5;
+    const row = html.slice(start, end);
+    const other = row.replace(/14127/g, '14128').replace(/\[001\]/g, '[002]').replace('(592|424)', '(592|416)');
+    return html.slice(0, start) + other + row + html.slice(start);
+  };
+
+  test('das nähere Dorf bekommt das einzige lohnende Ziel, nicht das erste in der Liste', async () => {
+    // nur 589|423 (voll, 3 Felder von [001], 7.6 von [002]); je 2 LKav
+    const env = createEnv({ premium: false, rows: fixture('farm_row_full_loot.html'), combinedHtml: twoVillages(2) });
+    await tick();
+    const data = await env.internals.getData(0, false, false, true, 0);
+    assert.deepEqual(Object.keys(data.villages).sort(), ['592|416', '592|424']);
+    const plan = env.internals.createPlanning({}, data);
+    // [001] bekommt den regulären Angriff; [002] höchstens einen Fallback-Angriff
+    // (Regel 'best': ein Angriff pro Dorf ohne Ziel), der später ankommt
+    const near = plan.farms['592|424'];
+    assert.equal(near.length, 1);
+    assert.equal(near[0].target.coord, '589|423');
+    assert.equal(near[0].fallback, false);
+    const far = plan.farms['592|416'] || [];
+    assert.ok(far.length <= 1);
+    if (far.length) {
+      assert.equal(far[0].fallback, true);
+      assert.ok(far[0].arrival > near[0].arrival);
+    }
+  });
+
+  test('beide Dörfer werden versorgt, das nähere mit dem besseren Score', async () => {
+    const env = createEnv({ premium: false, combinedHtml: twoVillages(2) });
+    await tick();
+    const data = await env.internals.getData(0, true, false, true, 500);
+    const plan = env.internals.createPlanning({}, data);
+    assert.equal(plan.counter, 2);
+    assert.equal(plan.farms['592|424'].length, 1);
+    assert.equal(plan.farms['592|416'].length, 1);
+    assert.ok(plan.farms['592|424'][0].score >= plan.farms['592|416'][0].score);
+    // jede Zeile trägt ihr eigenes Herkunftsdorf
+    assert.equal(plan.farms['592|416'][0].origin.id, 14128);
+    assert.equal(plan.farms['592|424'][0].origin.id, 14127);
+  });
+
+  test('Dörfer ohne Bericht: der beste Angriff geht vom näheren Dorf aus', async () => {
+    // Ziele nur graue Dörfer ohne Bericht (gleiche Punkte-Schätzung für beide Herkunftsdörfer)
+    const env = createEnv({ premium: false, rows: '', combinedHtml: twoVillages(2) });
+    await tick();
+    const data = await env.internals.getData(0, true, false, true, 500);
+    const plan = env.internals.createPlanning({}, data);
+    const all = Object.values(plan.farms).flat().sort((a, b) => b.score - a.score);
+    assert.equal(all.length, 2);
+    const best = all[0];
+    const other = best.origin.coord === '592|424' ? '592|416' : '592|424';
+    assert.ok(env.lib.getDistance(best.origin.coord, best.target.coord) <= env.lib.getDistance(other, best.target.coord));
+    assert.notEqual(all[0].origin.coord, all[1].origin.coord);
+  });
+});

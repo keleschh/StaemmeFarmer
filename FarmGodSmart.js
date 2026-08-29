@@ -16,6 +16,8 @@
 //  - Reihenfolge: Beute pro Stunde Laufzeit (hin und zurück). Ein nahes halbleeres Dorf schlägt
 //    ein weit entferntes volles. Unter einer Mindestbeute pro Stunde wird nur per Fallback das
 //    beste Dorf geschickt, damit die Truppen nie sinnlos rennen, aber auch nicht ganz stehen.
+//  - Mehrere Herkunftsdörfer werden gemeinsam geplant: jedes Ziel geht an das Dorf mit der besten
+//    Beute pro Stunde Laufzeit, nicht an das erste in der Übersicht.
 //  - Erst werden die Truppen als kleine Vorlage A auf möglichst viele Dörfer verteilt. Nur was
 //    dann noch zu Hause stünde, vergrößert die Angriffe auf die vollsten Dörfer zu Vorlage B.
 //    Mehrere A auf ein gespähtes volles Dorf werden zu einem B zusammengelegt; fehlt dafür genau
@@ -2314,43 +2316,101 @@ window.FarmGod.Main = (function (Library, Translation) {
       )
     );
 
-    for (let prop in data.villages) {
-      let origin = data.villages[prop];
-      let plannedForOrigin = 0;
-      let candidates = Object.keys(data.farms.farms)
+    // Every origin village with its candidate targets. The assignment is
+    // global: passes 1, 2c and 2d look at all (origin, target) pairs at once,
+    // so the origin with the best loot per hour of travel gets the target,
+    // not the origin that happens to come first in the overview.
+    const origins = Object.keys(data.villages).map((prop) => ({
+      prop,
+      origin: data.villages[prop],
+      planned: 0,
+      candidates: Object.keys(data.farms.farms)
         .map((coord) => ({ coord, dis: lib.getDistance(prop, coord) }))
         .filter((c) =>
           data.farms.farms[c.coord].is_new
             ? c.dis <= maxProbeFields
             : c.dis <= maxKnownFields
         )
-        .filter((c) => !((history[c.coord] || {}).troops > 0)); // scouted troops
+        .filter((c) => !((history[c.coord] || {}).troops > 0)), // scouted troops
+    }));
+    origins.forEach((o) =>
+      o.candidates.forEach((c) => {
+        data.farms.farms[c.coord].coord = c.coord;
+        if (!data.commands.hasOwnProperty(c.coord)) data.commands[c.coord] = [];
+      })
+    );
 
-      // ---- pass 1: greedy by loot per hour of travel, template A
-      while (true) {
-        let scored = [];
+    const scoreOf = (entry) =>
+      entry.travel > 0 ? entry.expected / ((2 * entry.travel) / 3600) : entry.expected;
+    const stockBefore = (entry) => lootableAt(entry.farm, entry.arrival - 1);
+    const entriesOf = (o) => plan.farms[o.prop] || [];
+    const plannedTargets = () => {
+      let planned = {};
+      origins.forEach((o) => entriesOf(o).forEach((entry) => (planned[entry.target.coord] = true)));
+      return planned;
+    };
 
-        candidates.forEach((c) => {
+    const newEntry = (o, farm, dis, templateName, template, arrival, travel, expected, flags) => {
+      let event = { ts: arrival, cap: template.capacity || 0 };
+      let m = modelOf(farm);
+      let h = historyOf(farm);
+      return Object.assign(
+        {
+          origin: { coord: o.prop, name: o.origin.name, id: o.origin.id },
+          target: { coord: farm.coord, id: farm.id },
+          farm,
+          event,
+          fields: dis,
+          template: { name: templateName, id: template.id },
+          expected,
+          capacity: template.capacity || 0,
+          score: travel > 0 ? expected / ((2 * travel) / 3600) : expected,
+          fallback: false,
+          returnTime: arrival + travel,
+          arrival,
+          travel,
+          points: farm.points || 0,
+          production: productionOf(farm),
+          scouted: m.exact,
+          loot: {
+            known: hasLootInfo(farm),
+            scouted: m.exact,
+            scoutAgeHours: h.scoutTime ? Math.max(0, (serverTime - h.scoutTime) / 3600) : null,
+            isNew: !!farm.is_new,
+            full: !!farm.max_loot,
+            ageMinutes: farm.report_time > 0 ? Math.max(0, (serverTime - farm.report_time) / 60) : null,
+          },
+        },
+        flags || {}
+      );
+    };
+    const addEntry = (o, entry, unitsLeft) => {
+      plan.counter++;
+      o.planned++;
+      o.origin.units = unitsLeft;
+      if (!plan.farms.hasOwnProperty(o.prop)) plan.farms[o.prop] = [];
+      plan.farms[o.prop].push(entry);
+      data.commands[entry.target.coord].push(entry.event);
+    };
+
+    // ---- pass 1: greedy by loot per hour of travel, template A, over all
+    // (origin, target) pairs
+    while (true) {
+      let scored = [];
+      origins.forEach((o) => {
+        let choice = pickTemplate(o.origin);
+        if (!choice) return;
+        o.candidates.forEach((c) => {
           let farm = data.farms.farms[c.coord];
-          farm.coord = c.coord;
-          if (!data.commands.hasOwnProperty(c.coord))
-            data.commands[c.coord] = [];
-
-          let choice = pickTemplate(origin);
-          if (!choice) return;
-
           let travel = Math.round(c.dis * choice.template.speed * 60);
           let arrival = serverTime + travel + Math.round(plan.counter / 5);
           let capacity = choice.template.capacity || 0;
           let expected = Math.min(lootableAt(farm, arrival), capacity);
-
           let roundTripHours = (2 * travel) / 3600;
-          let score = roundTripHours > 0 ? expected / roundTripHours : expected;
-
           scored.push({
-            coord: c.coord,
-            dis: c.dis,
+            o,
             farm,
+            dis: c.dis,
             templateName: choice.name,
             template: choice.template,
             unitsLeft: choice.unitsLeft,
@@ -2358,96 +2418,61 @@ window.FarmGod.Main = (function (Library, Translation) {
             travel,
             capacity,
             expected,
-            score,
+            score: roundTripHours > 0 ? expected / roundTripHours : expected,
           });
         });
+      });
+      if (scored.length == 0) break;
+      scored.sort((a, b) => b.score - a.score || a.dis - b.dis);
 
-        if (scored.length == 0) break;
-
-        scored.sort((a, b) => b.score - a.score || a.dis - b.dis);
-
-        // list is sorted by score, so the first entry that passes the
-        // minimum is also the best one
-        let pick = scored.find(
-          (s) => s.expected > 0 && s.score >= minScore
+      // list is sorted by score, so the first entry that passes the
+      // minimum is also the best one
+      let pick = scored.find((s) => s.expected > 0 && s.score >= minScore);
+      let isFallback = false;
+      if (!pick) {
+        if (RULES.fallbackMode == 'none') break;
+        // 'best': one fallback attack per origin that has nothing yet
+        pick = scored.find(
+          (s) =>
+            s.expected > 0 &&
+            s.expected >= s.capacity * RULES.fallbackMinFill &&
+            (RULES.fallbackMode != 'best' || s.o.planned == 0)
         );
-        let isFallback = false;
-
-        if (!pick) {
-          if (RULES.fallbackMode == 'none') break;
-          if (RULES.fallbackMode == 'best' && plannedForOrigin > 0) break;
-          pick = scored.find(
-            (s) =>
-              s.expected > 0 &&
-              s.expected >= s.capacity * RULES.fallbackMinFill
-          );
-          if (!pick) break;
-          isFallback = true;
-        }
-
-        plan.counter++;
-        plannedForOrigin++;
-        if (!plan.farms.hasOwnProperty(prop)) plan.farms[prop] = [];
-
-        let event = { ts: pick.arrival, cap: pick.capacity };
-        plan.farms[prop].push({
-          origin: { coord: prop, name: origin.name, id: origin.id },
-          target: { coord: pick.coord, id: pick.farm.id },
-          farm: pick.farm,
-          event: event,
-          fields: pick.dis,
-          template: { name: pick.templateName, id: pick.template.id },
-          expected: pick.expected,
-          capacity: pick.capacity,
-          score: pick.score,
-          fallback: isFallback,
-          returnTime: pick.arrival + pick.travel,
-          arrival: pick.arrival,
-          travel: pick.travel,
-          points: pick.farm.points || 0,
-          production: productionOf(pick.farm),
-          scouted: modelOf(pick.farm).exact,
-          loot: {
-            known: hasLootInfo(pick.farm),
-            scouted: modelOf(pick.farm).exact,
-            scoutAgeHours: historyOf(pick.farm).scoutTime
-              ? Math.max(0, (serverTime - historyOf(pick.farm).scoutTime) / 3600)
-              : null,
-            isNew: !!pick.farm.is_new,
-            full: !!pick.farm.max_loot,
-            ageMinutes:
-              pick.farm.report_time > 0
-                ? Math.max(0, (serverTime - pick.farm.report_time) / 60)
-                : null,
-          },
-        });
-
-        origin.units = pick.unitsLeft;
-        data.commands[pick.coord].push(event);
+        if (!pick) break;
+        isFallback = true;
       }
+      addEntry(
+        pick.o,
+        newEntry(pick.o, pick.farm, pick.dis, pick.templateName, pick.template, pick.arrival, pick.travel, pick.expected, {
+          fallback: isFallback,
+        }),
+        pick.unitsLeft
+      );
+    }
 
-      // ---- pass 2: use what would stay at home
-      if (templateA && templateB && templateB.capacity > templateA.capacity && plan.farms[prop]) {
-        const entries = () => plan.farms[prop];
-        const stockBefore = (entry) => lootableAt(entry.farm, entry.arrival - 1);
-        const scoreOf = (entry) =>
-          entry.travel > 0 ? entry.expected / ((2 * entry.travel) / 3600) : entry.expected;
-        const makeB = (entry, stock) => {
-          entry.template = { name: 'b', id: templateB.id };
-          entry.capacity = templateB.capacity;
-          entry.event.cap = templateB.capacity;
-          entry.expected = Math.min(stock, templateB.capacity);
-          entry.score = scoreOf(entry);
-        };
-        let extra = templateB.units.map((u, i) => u - (templateA.units[i] || 0));
-        let canGrow = extra.every((u) => u >= 0);
+    // ---- pass 2: use what would stay at home
+    const passTwo = templateA && templateB && templateB.capacity > templateA.capacity;
+    if (passTwo) {
+      const makeB = (entry, stock) => {
+        entry.template = { name: 'b', id: templateB.id };
+        entry.capacity = templateB.capacity;
+        entry.event.cap = templateB.capacity;
+        entry.expected = Math.min(stock, templateB.capacity);
+        entry.score = scoreOf(entry);
+      };
+      let extra = templateB.units.map((u, i) => u - (templateA.units[i] || 0));
+      let canGrow = extra.every((u) => u >= 0);
+      let perB = Math.max(
+        ...templateB.units.map((u, i) =>
+          u > 0 ? (templateA.units[i] > 0 ? Math.ceil(u / templateA.units[i]) : Infinity) : 0
+        )
+      );
 
-        // 2a: several A attacks on one village (known big stock) -> one B
-        let perB = Math.max(
-          ...templateB.units.map((u, i) =>
-            u > 0 ? (templateA.units[i] > 0 ? Math.ceil(u / templateA.units[i]) : Infinity) : 0
-          )
-        );
+      // 2a / 2b work on the attacks of one origin (its troops, its entries)
+      origins.forEach((o) => {
+        if (!plan.farms[o.prop]) return;
+        let origin = o.origin;
+        const entries = () => plan.farms[o.prop];
         const dropEntry = (entry) => {
           let idx = entries().indexOf(entry);
           if (idx >= 0) entries().splice(idx, 1);
@@ -2456,7 +2481,10 @@ window.FarmGod.Main = (function (Library, Translation) {
           if (ci >= 0) cmds.splice(ci, 1);
           origin.units = origin.units.map((u, i) => u + (templateA.units[i] || 0));
           plan.counter--;
+          o.planned--;
         };
+
+        // 2a: several A attacks on one village (known big stock) -> one B
         if (perB > 1 && isFinite(perB)) {
           while (true) {
             let groups = {};
@@ -2472,15 +2500,15 @@ window.FarmGod.Main = (function (Library, Translation) {
               let short = Object.values(groups)
                 .filter((g) => g.length == perB - 1)
                 .map((g) => ({ g, stock: stockBefore(g[0]) }))
-                .filter((o) => o.stock >= templateB.capacity * RULES.bFillRatio)
-                .sort((a, b) => b.stock - a.stock)[0];
+                .filter((x) => x.stock >= templateB.capacity * RULES.bFillRatio)
+                .sort((x, y) => y.stock - x.stock)[0];
               if (short) {
                 let gain =
                   Math.min(short.stock, templateB.capacity) -
                   (perB - 1) * templateA.capacity;
                 let weakest = entries()
                   .filter((e) => e.template.name == 'a' && short.g.indexOf(e) < 0)
-                  .sort((a, b) => a.expected - b.expected || b.travel - a.travel)[0];
+                  .sort((x, y) => x.expected - y.expected || y.travel - x.travel)[0];
                 if (weakest && gain >= weakest.expected) {
                   group = short.g;
                   donor = weakest;
@@ -2488,7 +2516,7 @@ window.FarmGod.Main = (function (Library, Translation) {
               }
             }
             if (!group) break;
-            group.sort((a, b) => a.arrival - b.arrival);
+            group.sort((x, y) => x.arrival - y.arrival);
             let first = group[0];
             let stock = stockBefore(first);
             if (stock < templateB.capacity * RULES.bFillRatio) break;
@@ -2505,8 +2533,8 @@ window.FarmGod.Main = (function (Library, Translation) {
             let upgradeable = entries()
               .filter((entry) => entry.template.name == 'a' && !entry.farm.is_new)
               .map((entry) => ({ entry, stock: stockBefore(entry) }))
-              .filter((o) => o.stock >= templateB.capacity * RULES.bFillRatio)
-              .sort((a, b) => b.stock - a.stock);
+              .filter((x) => x.stock >= templateB.capacity * RULES.bFillRatio)
+              .sort((x, y) => y.stock - x.stock);
             if (!upgradeable.length) break;
             let unitsLeft = lib.subtractArrays(origin.units, extra);
             if (!unitsLeft) break;
@@ -2514,16 +2542,18 @@ window.FarmGod.Main = (function (Library, Translation) {
             makeB(upgradeable[0].entry, upgradeable[0].stock);
           }
         }
+      });
 
-        // 2c: remaining troops -> new B attacks on full villages that were
-        // not worth an A trip (typically far away), best score first
-        while (true) {
-          let unitsLeft = lib.subtractArrays(origin.units, templateB.units);
-          if (!unitsLeft) break;
-          let planned = {};
-          entries().forEach((entry) => (planned[entry.target.coord] = true));
-          let best = null;
-          candidates.forEach((c) => {
+      // 2c: remaining troops -> new B attacks on full villages that were
+      // not worth an A trip (typically far away), best score over all
+      // (origin, target) pairs first
+      while (true) {
+        let planned = plannedTargets();
+        let best = null;
+        origins.forEach((o) => {
+          let unitsLeft = lib.subtractArrays(o.origin.units, templateB.units);
+          if (!unitsLeft) return;
+          o.candidates.forEach((c) => {
             let farm = data.farms.farms[c.coord];
             if (farm.is_new || planned[c.coord]) return;
             let travel = Math.round(c.dis * templateB.speed * 60);
@@ -2533,108 +2563,61 @@ window.FarmGod.Main = (function (Library, Translation) {
             let expected = Math.min(stock, templateB.capacity);
             let score = travel > 0 ? expected / ((2 * travel) / 3600) : expected;
             if (score < minScore) return;
-            if (!best || score > best.score) best = { c, farm, travel, arrival, expected, score };
+            if (!best || score > best.score) best = { o, unitsLeft, farm, dis: c.dis, travel, arrival, expected, score };
           });
-          if (!best) break;
-
-          plan.counter++;
-          origin.units = unitsLeft;
-          let event = { ts: best.arrival, cap: templateB.capacity };
-          if (!data.commands.hasOwnProperty(best.c.coord)) data.commands[best.c.coord] = [];
-          data.commands[best.c.coord].push(event);
-          entries().push({
-            origin: { coord: prop, name: origin.name, id: origin.id },
-            target: { coord: best.c.coord, id: best.farm.id },
-            farm: best.farm,
-            event: event,
-            fields: best.c.dis,
-            template: { name: 'b', id: templateB.id },
-            expected: best.expected,
-            capacity: templateB.capacity,
-            score: best.score,
-            fallback: false,
-            returnTime: best.arrival + best.travel,
-            arrival: best.arrival,
-            travel: best.travel,
-            points: best.farm.points || 0,
-            production: productionOf(best.farm),
-            scouted: modelOf(best.farm).exact,
-            loot: {
-              known: hasLootInfo(best.farm),
-              scouted: modelOf(best.farm).exact,
-              scoutAgeHours: historyOf(best.farm).scoutTime
-                ? Math.max(0, (serverTime - historyOf(best.farm).scoutTime) / 3600)
-                : null,
-              isNew: false,
-              full: !!best.farm.max_loot,
-              ageMinutes:
-                best.farm.report_time > 0
-                  ? Math.max(0, (serverTime - best.farm.report_time) / 60)
-                  : null,
-            },
-          });
-        }
-
-        // later attacks on the same village see the enlarged earlier ones
-        entries().forEach((entry) => {
-          entry.expected = Math.min(stockBefore(entry), entry.capacity);
-          entry.score = scoreOf(entry);
         });
+        if (!best) break;
+        addEntry(
+          best.o,
+          newEntry(best.o, best.farm, best.dis, 'b', templateB, best.arrival, best.travel, best.expected),
+          best.unitsLeft
+        );
       }
+    }
 
-      // ---- pass 2d: troops still at home probe villages without a report
-      // (information is worth more than the trip), nearest first
-      if (templateA) {
-        let planned = {};
-        (plan.farms[prop] || []).forEach((entry) => (planned[entry.target.coord] = true));
-        let probes = candidates
-          .filter((c) => data.farms.farms[c.coord].is_new && !planned[c.coord])
-          .map((c) => ({ c, travel: Math.round(c.dis * templateA.speed * 60) }))
-          .filter((p) => p.travel <= RULES.probeMaxTravelHours * 3600)
-          .sort((a, b) => a.travel - b.travel);
-
-        for (let p of probes) {
-          let unitsLeft = lib.subtractArrays(origin.units, templateA.units);
-          if (!unitsLeft) break;
-          let farm = data.farms.farms[p.c.coord];
-          if (!data.commands.hasOwnProperty(p.c.coord)) data.commands[p.c.coord] = [];
-          if (data.commands[p.c.coord].length) continue; // already on the way
-          let arrival = serverTime + p.travel + Math.round(plan.counter / 5);
-          let capacity = templateA.capacity || 0;
-          let expected = Math.min(lootableAt(farm, arrival), capacity);
-          if (expected <= 0) continue;
-
-          plan.counter++;
-          origin.units = unitsLeft;
-          let event = { ts: arrival, cap: capacity };
-          data.commands[p.c.coord].push(event);
-          if (!plan.farms.hasOwnProperty(prop)) plan.farms[prop] = [];
-          plan.farms[prop].push({
-            origin: { coord: prop, name: origin.name, id: origin.id },
-            target: { coord: p.c.coord, id: farm.id },
-            farm: farm,
-            event: event,
-            fields: p.c.dis,
-            template: { name: 'a', id: templateA.id },
-            expected: expected,
-            capacity: capacity,
-            score: p.travel > 0 ? expected / ((2 * p.travel) / 3600) : expected,
-            fallback: false,
+    // ---- pass 2d: troops still at home probe villages without a report
+    // (information is worth more than the trip), nearest pair first
+    if (templateA) {
+      let planned = plannedTargets();
+      let probes = [];
+      origins.forEach((o) =>
+        o.candidates.forEach((c) => {
+          if (!data.farms.farms[c.coord].is_new || planned[c.coord]) return;
+          let travel = Math.round(c.dis * templateA.speed * 60);
+          if (travel <= RULES.probeMaxTravelHours * 3600) probes.push({ o, c, travel });
+        })
+      );
+      probes.sort((x, y) => x.travel - y.travel);
+      for (let p of probes) {
+        let unitsLeft = lib.subtractArrays(p.o.origin.units, templateA.units);
+        if (!unitsLeft) continue;
+        let farm = data.farms.farms[p.c.coord];
+        if (data.commands[p.c.coord].length) continue; // already on the way / probed by another origin
+        let arrival = serverTime + p.travel + Math.round(plan.counter / 5);
+        let expected = Math.min(lootableAt(farm, arrival), templateA.capacity || 0);
+        if (expected <= 0) continue;
+        addEntry(
+          p.o,
+          newEntry(p.o, farm, p.c.dis, 'a', templateA, arrival, p.travel, expected, {
             probe: true,
-            returnTime: arrival + p.travel,
-            arrival: arrival,
-            travel: p.travel,
-            points: farm.points || 0,
-            production: productionOf(farm),
             scouted: false,
             loot: { known: false, scouted: false, scoutAgeHours: null, isNew: true, full: false, ageMinutes: null },
-          });
-        }
+          }),
+          unitsLeft
+        );
       }
-
-      if (plan.farms[prop])
-        plan.farms[prop].sort((a, b) => b.score - a.score || a.fields - b.fields);
     }
+
+    // later attacks on the same village (also from other origins) see the
+    // earlier and the enlarged ones
+    origins.forEach((o) => {
+      entriesOf(o).forEach((entry) => {
+        entry.expected = Math.min(stockBefore(entry), entry.capacity);
+        entry.score = scoreOf(entry);
+      });
+      if (plan.farms[o.prop])
+        plan.farms[o.prop].sort((x, y) => y.score - x.score || x.fields - y.fields);
+    });
 
     return plan;
   };
