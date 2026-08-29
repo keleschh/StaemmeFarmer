@@ -1,39 +1,31 @@
-// FarmGodSmart v2 - modifizierte Version von FarmGod (Original: Warre, Kopie: higamy)
+// FarmGodSmart - modifizierte Version von FarmGod (Original: Warre, Kopie: higamy)
 //
-// Was anders ist als im Original:
-//  - Jedes Farmdorf bekommt eine Schätzung, wie viele Rohstoffe bis zur Ankunft dort liegen:
-//      * letzte Beute NICHT voll  -> Dorf war leer; seitdem produziert es. Die Produktion wird
-//        automatisch aus den Dorfpunkten geschätzt (map/village.txt, Weltgeschwindigkeit aus
-//        get_config), alternativ ein fester Wert.
-//      * letzte Beute voll        -> mindestens noch eine volle A-Beute plus Produktion seitdem
-//      * keine Beute-Info         -> wie "voll" behandelt
-//  - Die erwartete Beute wird auf die Tragekapazität der Vorlage gedeckelt und durch die Laufzeit
-//    (hin und zurück) geteilt. Diese "Beute pro Stunde Laufzeit" bestimmt die Reihenfolge, nicht
-//    mehr nur die Entfernung. Ein nahes halbleeres Dorf schlägt so ein weit entferntes volles.
-//  - Mindest-Beute pro Stunde Laufzeit. Dörfer darunter werden ignoriert...
-//  - ...außer per Fallback: Erreicht kein Dorf das Minimum, wird trotzdem das beste angegriffen.
-//  - Laufende oder gerade geplante Angriffe auf ein Dorf gelten als "leert das Dorf bei Ankunft";
-//    danach zählt nur noch die Produktion. Damit erübrigt sich ein Mindestabstand.
-//  - Passt die gewünschte Vorlage nicht (z. B. zu wenig Einheiten für B), wird die andere genommen.
-//  - Im Dialog bleiben nur drei Einstellungen (Gruppe, Entfernung, Dörfer ohne Bericht bis X Punkte).
-//    Der Dialog kommt nur beim ersten Start; danach wird sofort geplant, die Einstellungen sind
-//    über einen Link in der Tabelle erreichbar. Alles andere sind feste Regeln (RULES weiter unten).
-//  - Vorlage B wird genommen, wenn das Dorf voraussichtlich genug für B hat. Ein Dorf, das noch nie
-//    leer war (erster Treffer voll), gilt als gut gefüllt -> B. Ein Dorf, das nur seit dem letzten
-//    Leerfarmen wieder etwas angesammelt hat, bekommt A. Dörfer ohne Bericht bekommen immer erst A.
-//  - Das Skript merkt sich pro Dorf, wann es leer war und ob unsere Beutezüge voll waren, und leitet
-//    daraus Ober-/Untergrenzen für die echte Produktion ab (lernt also ohne Späher mit).
-//  - Spähberichte werden ausgewertet (1 Request pro neuem Bericht): Rohstoffe und Gebäude liefern
-//    exakte Produktion, Versteck und Speicher. Ab dann rechnet das Skript für dieses Dorf pro
-//    Rohstoffart, was tatsächlich plünderbar ist. Ohne Spähbericht bleibt die Punkteschätzung.
-//    Wächst das Dorf nach dem Spähen (Punkte steigen), wächst die Produktion im Modell mit; eigene
-//    Beutezüge korrigieren sie zusätzlich. Ein neuer Spähbericht setzt alles wieder exakt.
-//  - Tabelle zeigt pro Farm, wann die Truppen wieder zu Hause sind.
-//  - Tabelle zeigt erwartete Beute, Score und die letzte Beute (voll / nicht voll, wie lange her).
-//  - Barbaren-/Bonusdörfer ohne Bericht können mit eingeplant werden (Dorfliste der Welt,
-//    Punktelimit als Sicherung gegen ehemalige Spielerdörfer mit Resttruppen). Im Original nur
-//    auf dem NL-Markt freigeschaltet.
-//  - Deutsche Übersetzung.
+// Bedienung: Farm-Assistent öffnen, Skript starten, Enter drücken bis die Tabelle leer ist,
+// wiederkommen wenn die Truppen zurück sind ("Truppen zurück ab" steht oben in der Tabelle).
+// Der Dialog mit den drei Einstellungen (Gruppe, max. Entfernung, Dörfer ohne Bericht bis X
+// Punkte) kommt nur beim ersten Start; danach über den Link "Einstellungen" in der Tabelle.
+//
+// Was das Skript rechnet:
+//  - Für jedes Dorf wird geschätzt, wie viel bis zur Ankunft plünderbar ist. Grundlage ist der
+//    letzte bekannte Stand (Beutebericht: leer bzw. minus Beute, Spähbericht: exakte Rohstoffe)
+//    plus die Produktion seitdem. Die Produktion kommt aus gespähten Minenstufen, sonst aus den
+//    Dorfpunkten (Dorfliste der Welt), korrigiert durch eigene volle / nicht volle Beutezüge.
+//  - Reihenfolge: Beute pro Stunde Laufzeit (hin und zurück). Ein nahes halbleeres Dorf schlägt
+//    ein weit entferntes volles. Unter einer Mindestbeute pro Stunde wird nur per Fallback das
+//    beste Dorf geschickt, damit die Truppen nie sinnlos rennen, aber auch nicht ganz stehen.
+//  - Erst werden die Truppen als kleine Vorlage A auf möglichst viele Dörfer verteilt. Nur was
+//    dann noch zu Hause stünde, vergrößert die Angriffe auf die vollsten Dörfer zu Vorlage B.
+//    Dörfer ohne Bericht bekommen immer erst A als Probe.
+//  - Laufende und gerade geplante Angriffe werden vom Vorrat abgezogen (bei nur geschätztem Vorrat
+//    gilt das Dorf danach als leer). Mehrere Angriffe auf ein Dorf im selben Durchlauf gibt es
+//    nur, wenn der Vorrat aus einem Spähbericht bekannt ist.
+//  - Spähberichte (1 Request pro neuem Bericht, max. 10 pro Durchlauf) liefern Rohstoffe, Gebäude
+//    (Produktion, Versteck, Speicher) und Truppen. Dörfer mit Truppen werden gemieden. Wächst ein
+//    Dorf nach dem Spähen (Punkte steigen), wächst die Produktion im Modell mit.
+//  - Barbaren-/Bonusdörfer ohne Bericht können mit eingeplant werden (Punktelimit als Sicherung
+//    gegen ehemalige Spielerdörfer mit Resttruppen). Im Original nur auf dem NL-Markt.
+//  - Gedächtnis pro Dorf im Browser (localStorage), 14 Tage nach dem letzten Bericht gelöscht.
+//    Feste Regeln stehen im Block RULES weiter unten.
 // Das Senden selbst ist unverändert: jede Farm braucht weiterhin einen Klick bzw. Enter.
 //
 // Hungarian translation provided by =Krumpli=
@@ -475,7 +467,8 @@ window.FarmGod.Library = (function () {
       let ss = parseInt(clock[3] || 0);
       let d = $('#serverDate')
         .text()
-        .split('/')
+        .trim()
+        .split(/[\/.\-]/)
         .map((x) => +x); // [day, month, year]
       let today = new Date(d[2], d[1] - 1, d[0]);
       let date = new Date(d[2], d[1] - 1, d[0], hh, mm, ss);
@@ -601,6 +594,7 @@ window.FarmGod.Translation = (function () {
         villageError:
           'Alle farms voor het huidige dorp zijn reeds verstuurd!',
         sendError: 'Error: farm niet verstuurd!',
+        loadError: 'Could not load the data (see console). Reload the page and try again.',
       },
     },
     hu_HU: {
@@ -665,6 +659,7 @@ window.FarmGod.Translation = (function () {
         villageChanged: 'Falu sikeresen megvÃ¡ltoztatva!',
         villageError: 'Minden farm kiment a jelenlegi falubÃ³l!',
         sendError: 'Hiba: Farm nemvolt elkÃ¼ldve!',
+        loadError: 'Could not load the data (see console). Reload the page and try again.',
       },
     },
     int: {
@@ -729,6 +724,7 @@ window.FarmGod.Translation = (function () {
         villageError:
           'All farms for the current village have been sent!',
         sendError: 'Error: farm not send!',
+        loadError: 'Could not load the data (see console). Reload the page and try again.',
       },
     },
     de_DE: {
@@ -793,6 +789,7 @@ window.FarmGod.Translation = (function () {
         villageError:
           'Alle Farmen für das aktuelle Dorf wurden bereits geschickt!',
         sendError: 'Fehler: Farm nicht geschickt!',
+        loadError: 'Daten konnten nicht geladen werden (Details in der Konsole). Seite neu laden und nochmal starten.',
       },
     },
   };
@@ -904,7 +901,7 @@ window.FarmGod.Main = (function (Library, Translation) {
   // Gebäuden, sonst grob aus den Punkten (gleichmäßig verteilt, kein Versteck)
   const buildModel = function (farm, h, worldSpeed) {
     let b = h.buildings;
-    if (b && RES.some((k) => typeof b[k] !== 'undefined')) {
+    if (b && (RES.some((k) => typeof b[k] !== 'undefined') || typeof b.main !== 'undefined')) {
       let hidden = HIDE_BY_LEVEL[levelOf(b, 'hide', 10)];
       let cap = WAREHOUSE_BY_LEVEL[Math.max(1, levelOf(b, 'storage', 30))];
       let prod = RES.map((k) => PROD_BY_LEVEL[levelOf(b, k, 30)] * worldSpeed);
@@ -1008,6 +1005,7 @@ window.FarmGod.Main = (function (Library, Translation) {
         speicher: 'storage', warehouse: 'storage', opslagplaats: 'storage',
         versteck: 'hide', 'hiding place': 'hide', schuilplaats: 'hide',
         wall: 'wall', muur: 'wall',
+        hauptgebäude: 'main', headquarters: 'main', hoofdgebouw: 'main',
       };
       $html
         .find('#attack_spy_buildings_left tr, #attack_spy_buildings_right tr')
@@ -1024,6 +1022,21 @@ window.FarmGod.Main = (function (Library, Translation) {
         });
     }
     if (Object.keys(buildings).length) result.buildings = buildings;
+
+    // defenders shown in the report (a scout report lists the village's units)
+    let $def = $html.find('#attack_info_def');
+    if ($def.length) {
+      let troops = 0;
+      let found = false;
+      $def.find('.unit-item').each((i, td) => {
+        let n = parseInt($(td).text().replace(/[^\d]/g, ''));
+        if (!isNaN(n)) {
+          found = true;
+          troops += n;
+        }
+      });
+      if (found) result.troops = troops;
+    }
 
     return result;
   };
@@ -1054,6 +1067,7 @@ window.FarmGod.Main = (function (Library, Translation) {
                 reportId: farms[coord].report_id,
                 res: parsed.res,
                 buildings: parsed.buildings,
+                troops: parsed.troops,
               };
             },
             () => {}
@@ -1079,6 +1093,8 @@ window.FarmGod.Main = (function (Library, Translation) {
         h.noScout = (h.noScout || []).concat([scout.reportId]).slice(-5);
         scout = null;
       }
+      // troops seen in the village (from a scout report)
+      if (scout && typeof scout.troops === 'number') h.troops = scout.troops;
       if (scout && scout.buildings) {
         h.buildings = Object.assign(h.buildings || {}, scout.buildings);
         h.scoutReportId = scout.reportId;
@@ -1110,7 +1126,10 @@ window.FarmGod.Main = (function (Library, Translation) {
         landed.forEach((x) => {
           if (x.arrival <= cur.time) return;
           let rawAt = forecastRaw(m, cur.raw, (x.arrival - cur.time) / 3600);
-          cur = { time: x.arrival, raw: takeFrom(m, rawAt, x.capacity) };
+          cur = {
+            time: x.arrival,
+            raw: takeFrom(m, rawAt, m.exact ? x.capacity : Infinity),
+          };
         });
         let rawAtT = forecastRaw(m, cur.raw, (T - cur.time) / 3600);
         if (scout && scout.res) rawAtT = scout.res.slice();
@@ -1131,7 +1150,12 @@ window.FarmGod.Main = (function (Library, Translation) {
             }
           }
           if (farm.max_loot) {
-            h.base = { time: T, raw: takeFrom(m, rawAtT, capSent || capacityA) };
+            // resources scouted in the same report are what was left after
+            // the haul; otherwise subtract the haul from the forecast
+            h.base = {
+              time: T,
+              raw: scout && scout.res ? rawAtT : takeFrom(m, rawAtT, capSent || capacityA),
+            };
           } else {
             h.base = { time: T, raw: rawAtT.map((v, i) => Math.min(v, m.hidden[i])) };
             h.emptiedAt = T;
@@ -1150,9 +1174,7 @@ window.FarmGod.Main = (function (Library, Translation) {
           time: T,
           raw: farm.has_loot_info && !farm.max_loot
             ? scout.res.map((v, i) => Math.min(v, m.hidden[i]))
-            : farm.has_loot_info
-              ? takeFrom(m, scout.res.slice(), h.lastCap || capacityA)
-              : scout.res.slice(),
+            : scout.res.slice(),
         };
       }
       if (scout && scout.res) h.scoutRawId = scout.reportId;
@@ -1247,16 +1269,29 @@ window.FarmGod.Main = (function (Library, Translation) {
       RULES.attackWithLosses,
       true,
       options.optionNewbarbsMaxPoints
-    ).then((data) => {
-      let plan = createPlanning({ distance: options.optionDistance }, data);
-      $('.farmGodContent').remove();
-      $('#am_widget_Farm').first().before(buildTable(plan));
+    )
+      .then((data) => {
+        let plan = createPlanning({ distance: options.optionDistance }, data);
+        $('.farmGodContent').remove();
+        $('#am_widget_Farm').first().before(buildTable(plan));
 
-      bindEventHandlers();
-      UI.InitProgressBars();
-      UI.updateProgressBar($('#FarmGodProgessbar'), 0, plan.counter);
-      $('#FarmGodProgessbar').data('current', 0).data('max', plan.counter);
-    });
+        bindEventHandlers();
+        UI.InitProgressBars();
+        UI.updateProgressBar($('#FarmGodProgessbar'), 0, plan.counter);
+        $('#FarmGodProgessbar').data('current', 0).data('max', plan.counter);
+      })
+      .catch((e) => {
+        console.error('FarmGodSmart:', e);
+        $('.farmGodContent').html(
+          `<div class="vis farmGodContent" style="padding:10px;">FarmGodSmart: ${t.messages.loadError} <a href="#" class="farmGodSettings">${t.table.settings}</a></div>`
+        );
+        $('.farmGodSettings')
+          .off('click')
+          .on('click', (ev) => {
+            ev.preventDefault();
+            showOptions();
+          });
+      });
   };
 
   const bindEventHandlers = function () {
@@ -1277,6 +1312,7 @@ window.FarmGod.Main = (function (Library, Translation) {
       .off('keydown')
       .on('keydown', (event) => {
         if ((event.keyCode || event.which) == 13) {
+          if ($(event.target).is('input, select, textarea')) return;
           $('.farmGod_icon').first().trigger('click');
         }
       });
@@ -1445,7 +1481,7 @@ window.FarmGod.Main = (function (Library, Translation) {
                     <td style="text-align:center;">${formatTime(val.returnTime)}</td>
                     <td style="text-align:center;"><a href="#" data-origin="${val.origin.id
             }" data-target="${val.target.id}" data-template="${val.template.id
-            }" data-coord="${val.target.coord}" data-arrival="${val.arrival
+            }" data-coord="${val.target.coord}" data-travel="${val.travel
             }" data-capacity="${val.capacity
             }" class="farmGod_icon farm_icon farm_icon_${val.template.name
             }" style="margin:auto;"></a></td>
@@ -1840,37 +1876,23 @@ window.FarmGod.Main = (function (Library, Translation) {
       return lootableOf(m, forecastRaw(m, cur.raw, (t - cur.time) / 3600));
     };
 
-    // Picks the template for a farm: B if the village probably holds enough
-    // to fill B, else A; falls back to the other one if the preferred does
-    // not fit into the troops at home.
-    const chooseTemplate = (origin, resources, farm) => {
-      let tB = data.farms.templates.b;
-      let name =
-        tB &&
-        tB.capacity > capacityA &&
-        !farm.is_new && // never attacked: probe with A first
-        resources >= tB.capacity * RULES.bFillRatio
-          ? 'b'
-          : 'a';
-      let template = data.farms.templates[name];
-      let unitsLeft = template
-        ? lib.subtractArrays(origin.units, template.units)
-        : false;
+    // usable templates (at least one unit) and what fits into the troops
+    const usable = (tpl) =>
+      tpl && Array.isArray(tpl.units) && tpl.units.some((u) => u > 0);
+    const templateA = usable(data.farms.templates.a) ? data.farms.templates.a : null;
+    const templateB = usable(data.farms.templates.b) ? data.farms.templates.b : null;
 
-      if (!unitsLeft && RULES.templateFallback) {
-        let otherName = name == 'a' ? 'b' : 'a';
-        let other = data.farms.templates[otherName];
-        let otherLeft = other
-          ? lib.subtractArrays(origin.units, other.units)
-          : false;
-        if (otherLeft) {
-          name = otherName;
-          template = other;
-          unitsLeft = otherLeft;
-        }
+    // Pass 1 always uses the small template A (spread the troops over as
+    // many villages as possible); B only if A is not usable at all.
+    const pickTemplate = (origin) => {
+      let order = [];
+      if (templateA) order.push(['a', templateA]);
+      if (templateB && (!templateA || RULES.templateFallback)) order.push(['b', templateB]);
+      for (let [name, template] of order) {
+        let unitsLeft = lib.subtractArrays(origin.units, template.units);
+        if (unitsLeft) return { name, template, unitsLeft };
       }
-
-      return unitsLeft ? { name, template, unitsLeft } : false;
+      return false;
     };
 
     for (let prop in data.villages) {
@@ -1878,10 +1900,10 @@ window.FarmGod.Main = (function (Library, Translation) {
       let plannedForOrigin = 0;
       let candidates = Object.keys(data.farms.farms)
         .map((coord) => ({ coord, dis: lib.getDistance(prop, coord) }))
-        .filter((c) => c.dis < options.distance);
+        .filter((c) => c.dis < options.distance)
+        .filter((c) => !((history[c.coord] || {}).troops > 0)); // scouted troops
 
-      // Greedy: repeatedly pick the target with the best loot per hour of
-      // travel until no troops / no sensible target is left.
+      // ---- pass 1: greedy by loot per hour of travel, template A
       while (true) {
         let scored = [];
 
@@ -1891,28 +1913,15 @@ window.FarmGod.Main = (function (Library, Translation) {
           if (!data.commands.hasOwnProperty(c.coord))
             data.commands[c.coord] = [];
 
-          const resourcesAt = (arrival) => lootableAt(farm, arrival);
-          const arrivalWith = (speed) =>
-            Math.round(
-              serverTime + c.dis * speed * 60 + Math.round(plan.counter / 5)
-            );
-
-          // estimate with template A's travel time, choose the template, then
-          // recompute with the chosen template's speed
-          let refTemplate = data.farms.templates.a || data.farms.templates.b;
-          if (!refTemplate) return;
-          let choice = chooseTemplate(
-            origin,
-            resourcesAt(arrivalWith(refTemplate.speed)),
-            farm
-          );
+          let choice = pickTemplate(origin);
           if (!choice) return;
 
-          let arrival = arrivalWith(choice.template.speed);
+          let travel = Math.round(c.dis * choice.template.speed * 60);
+          let arrival = serverTime + travel + Math.round(plan.counter / 5);
           let capacity = choice.template.capacity || 0;
-          let expected = Math.min(resourcesAt(arrival), capacity);
+          let expected = Math.min(lootableAt(farm, arrival), capacity);
 
-          let roundTripHours = (2 * c.dis * choice.template.speed) / 60;
+          let roundTripHours = (2 * travel) / 3600;
           let score = roundTripHours > 0 ? expected / roundTripHours : expected;
 
           scored.push({
@@ -1923,6 +1932,7 @@ window.FarmGod.Main = (function (Library, Translation) {
             template: choice.template,
             unitsLeft: choice.unitsLeft,
             arrival,
+            travel,
             capacity,
             expected,
             score,
@@ -1956,17 +1966,21 @@ window.FarmGod.Main = (function (Library, Translation) {
         plannedForOrigin++;
         if (!plan.farms.hasOwnProperty(prop)) plan.farms[prop] = [];
 
+        let event = { ts: pick.arrival, cap: pick.capacity };
         plan.farms[prop].push({
           origin: { coord: prop, name: origin.name, id: origin.id },
           target: { coord: pick.coord, id: pick.farm.id },
+          farm: pick.farm,
+          event: event,
           fields: pick.dis,
           template: { name: pick.templateName, id: pick.template.id },
           expected: pick.expected,
           capacity: pick.capacity,
           score: pick.score,
           fallback: isFallback,
-          returnTime: pick.arrival + Math.round(pick.dis * pick.template.speed * 60),
+          returnTime: pick.arrival + pick.travel,
           arrival: pick.arrival,
+          travel: pick.travel,
           points: pick.farm.points || 0,
           production: productionOf(pick.farm),
           scouted: modelOf(pick.farm).exact,
@@ -1986,7 +2000,141 @@ window.FarmGod.Main = (function (Library, Translation) {
         });
 
         origin.units = pick.unitsLeft;
-        data.commands[pick.coord].push({ ts: pick.arrival, cap: pick.capacity });
+        data.commands[pick.coord].push(event);
+      }
+
+      // ---- pass 2: use what would stay at home
+      if (templateA && templateB && templateB.capacity > templateA.capacity && plan.farms[prop]) {
+        const entries = () => plan.farms[prop];
+        const stockBefore = (entry) => lootableAt(entry.farm, entry.arrival - 1);
+        const scoreOf = (entry) =>
+          entry.travel > 0 ? entry.expected / ((2 * entry.travel) / 3600) : entry.expected;
+        const makeB = (entry, stock) => {
+          entry.template = { name: 'b', id: templateB.id };
+          entry.capacity = templateB.capacity;
+          entry.event.cap = templateB.capacity;
+          entry.expected = Math.min(stock, templateB.capacity);
+          entry.score = scoreOf(entry);
+        };
+        let extra = templateB.units.map((u, i) => u - (templateA.units[i] || 0));
+        let canGrow = extra.every((u) => u >= 0);
+
+        // 2a: several A attacks on one village (known big stock) -> one B
+        let perB = Math.max(
+          ...templateB.units.map((u, i) =>
+            u > 0 ? (templateA.units[i] > 0 ? Math.ceil(u / templateA.units[i]) : Infinity) : 0
+          )
+        );
+        if (perB > 1 && isFinite(perB)) {
+          while (true) {
+            let groups = {};
+            entries().forEach((entry) => {
+              if (entry.template.name != 'a' || entry.farm.is_new) return;
+              (groups[entry.target.coord] = groups[entry.target.coord] || []).push(entry);
+            });
+            let group = Object.values(groups).find((g) => g.length >= perB);
+            if (!group) break;
+            group.sort((a, b) => a.arrival - b.arrival);
+            let first = group[0];
+            let stock = stockBefore(first);
+            if (stock < templateB.capacity * RULES.bFillRatio) break;
+            let removed = group.slice(1, perB);
+            removed.forEach((entry) => {
+              let idx = entries().indexOf(entry);
+              if (idx >= 0) entries().splice(idx, 1);
+              let cmds = data.commands[entry.target.coord] || [];
+              let ci = cmds.indexOf(entry.event);
+              if (ci >= 0) cmds.splice(ci, 1);
+              origin.units = origin.units.map((u, i) => u + (templateA.units[i] || 0));
+              plan.counter--;
+            });
+            origin.units = origin.units.map((u, i) => u + (templateA.units[i] || 0) - templateB.units[i]);
+            makeB(first, stock);
+          }
+        }
+
+        if (canGrow) {
+          // 2b: enlarge planned A attacks on the fullest villages to B
+          while (true) {
+            let upgradeable = entries()
+              .filter((entry) => entry.template.name == 'a' && !entry.farm.is_new)
+              .map((entry) => ({ entry, stock: stockBefore(entry) }))
+              .filter((o) => o.stock >= templateB.capacity * RULES.bFillRatio)
+              .sort((a, b) => b.stock - a.stock);
+            if (!upgradeable.length) break;
+            let unitsLeft = lib.subtractArrays(origin.units, extra);
+            if (!unitsLeft) break;
+            origin.units = unitsLeft;
+            makeB(upgradeable[0].entry, upgradeable[0].stock);
+          }
+        }
+
+        // 2c: remaining troops -> new B attacks on full villages that were
+        // not worth an A trip (typically far away), best score first
+        while (true) {
+          let unitsLeft = lib.subtractArrays(origin.units, templateB.units);
+          if (!unitsLeft) break;
+          let planned = {};
+          entries().forEach((entry) => (planned[entry.target.coord] = true));
+          let best = null;
+          candidates.forEach((c) => {
+            let farm = data.farms.farms[c.coord];
+            if (farm.is_new || planned[c.coord]) return;
+            let travel = Math.round(c.dis * templateB.speed * 60);
+            let arrival = serverTime + travel + Math.round(plan.counter / 5);
+            let stock = lootableAt(farm, arrival);
+            if (stock < templateB.capacity * RULES.bFillRatio) return;
+            let expected = Math.min(stock, templateB.capacity);
+            let score = travel > 0 ? expected / ((2 * travel) / 3600) : expected;
+            if (score < minScore) return;
+            if (!best || score > best.score) best = { c, farm, travel, arrival, expected, score };
+          });
+          if (!best) break;
+
+          plan.counter++;
+          origin.units = unitsLeft;
+          let event = { ts: best.arrival, cap: templateB.capacity };
+          if (!data.commands.hasOwnProperty(best.c.coord)) data.commands[best.c.coord] = [];
+          data.commands[best.c.coord].push(event);
+          entries().push({
+            origin: { coord: prop, name: origin.name, id: origin.id },
+            target: { coord: best.c.coord, id: best.farm.id },
+            farm: best.farm,
+            event: event,
+            fields: best.c.dis,
+            template: { name: 'b', id: templateB.id },
+            expected: best.expected,
+            capacity: templateB.capacity,
+            score: best.score,
+            fallback: false,
+            returnTime: best.arrival + best.travel,
+            arrival: best.arrival,
+            travel: best.travel,
+            points: best.farm.points || 0,
+            production: productionOf(best.farm),
+            scouted: modelOf(best.farm).exact,
+            loot: {
+              known: hasLootInfo(best.farm),
+              scouted: modelOf(best.farm).exact,
+              scoutAgeHours: historyOf(best.farm).scoutTime
+                ? Math.max(0, (serverTime - historyOf(best.farm).scoutTime) / 3600)
+                : null,
+              isNew: false,
+              full: !!best.farm.max_loot,
+              ageMinutes:
+                best.farm.report_time > 0
+                  ? Math.max(0, (serverTime - best.farm.report_time) / 60)
+                  : null,
+            },
+          });
+        }
+
+        // later attacks on the same village see the enlarged earlier ones
+        entries().forEach((entry) => {
+          entry.expected = Math.min(stockBefore(entry), entry.capacity);
+          entry.score = scoreOf(entry);
+        });
+        entries().sort((a, b) => b.score - a.score || a.fields - b.fields);
       }
     }
 
@@ -2021,7 +2169,8 @@ window.FarmGod.Main = (function (Library, Translation) {
           UI.SuccessMessage(r.success);
           rememberSent(
             $this.data('coord'),
-            parseInt($this.data('arrival')) || 0,
+            Math.round(lib.getCurrentServerTime() / 1000) +
+              (parseInt($this.data('travel')) || 0),
             parseInt($this.data('capacity')) || 0
           );
           $pb.data('current', $pb.data('current') + 1);
