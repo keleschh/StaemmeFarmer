@@ -1,0 +1,36 @@
+<div id="plunder_list_nav" style="width:100%;">
+<table style="width:100%;"><tbody><tr>
+<td align="center" colspan="12">
+<strong class="paged-nav-item"> &gt;1&lt; </strong>
+</td>
+</tr>
+</tbody></table>
+</div>
+<div id="plunder_list_filters" style="display:inline-block; background-color:#f4e4bc; margin: 2px 2px 0px 2px;">
+<div style="float:left;">
+<span>
+<input type="checkbox" id="all_village_checkbox" onclick="Accountmanager.farm.toggleAllVillages(this, true)">
+<label for="all_village_checkbox">Zeige nur Angriffe, die von diesem Dorf ausgingen.</label>
+</span>
+<br>
+<span>
+<input type="checkbox" id="attacked_checkbox" onclick="Accountmanager.farm.toggleShowAttacked(this, true)" checked="checked">
+<label for="attacked_checkbox">Füge Berichte von Dörfern, welche du gerade angreifst, bei.</label>
+</span>
+</div>
+<div style="float:left; padding-left: 10px;">
+<span>
+<input type="checkbox" id="full_losses_checkbox" onclick="Accountmanager.farm.toggleShowFullLosses(this, true)" checked="checked">
+<label for="full_losses_checkbox">Berichte vollständiger Verluste beifügen.</label>
+</span>
+<br>
+<span>
+<input type="checkbox" id="partial_losses_checkbox" onclick="Accountmanager.farm.toggleShowPartialLosses(this, true)" checked="checked">
+<label for="partial_losses_checkbox">Berichte teilweiser Verluste beifügen.</label>
+</span>
+</div>
+<span style="float:left">
+<input type="checkbox" id="full_hauls_checkbox" onclick="Accountmanager.farm.toggleOnlyFullHauls(this, true)">
+<label for="full_hauls_checkbox">Nur Berichte anzeigen, in welchen deine Truppen die volle Beutekapazität ausschöpfen konnten.</label>
+</span>
+</div>

@@ -976,8 +976,13 @@ window.FarmGod.Main = (function (Library, Translation) {
   const parseScoutReport = function ($html) {
     let result = { res: null, buildings: null };
 
+    // The report shows two resource rows: "Erspähte Rohstoffe" (what the
+    // scouts saw) and "Mögliche Rohstoffe" (tr.no-preview, the game's own
+    // extrapolation to now). Only the scouted values are used here.
     let $res = $html.find('#attack_spy_resources');
     if ($res.length) {
+      let $rows = $res.find('tr').not('.no-preview');
+      if ($rows.find('.icon.header.wood').length) $res = $rows;
       let res = {};
       RES.forEach((k) => {
         let $icon = $res.find(`.icon.header.${k}`).first();
@@ -988,7 +993,11 @@ window.FarmGod.Main = (function (Library, Translation) {
         if (!isNaN(n)) res[k] = n;
       });
       if (Object.keys(res).length < 3) {
-        let nums = ($res.text().match(/\d[\d.]*/g) || []).map((x) =>
+        // text fallback (icons missing): only the scouted row, without the
+        // inline script of the "Mögliche Rohstoffe" row (contains village ids)
+        let $plain = $res.clone();
+        $plain.find('script, .no-preview').remove();
+        let nums = ($plain.text().match(/\d[\d.]*/g) || []).map((x) =>
           parseInt(x.replace(/\./g, ''))
         );
         if (nums.length >= 3) res = { wood: nums[0], stone: nums[1], iron: nums[2] };
@@ -1034,11 +1043,16 @@ window.FarmGod.Main = (function (Library, Translation) {
     if (Object.keys(buildings).length) result.buildings = buildings;
 
     // defenders shown in the report (a scout report lists the village's units)
+    // (#attack_info_def lists "Anzahl" and "Verluste" rows; only the first
+    // row with unit cells is the number of units present)
     let $def = $html.find('#attack_info_def');
     if ($def.length) {
       let troops = 0;
       let found = false;
-      $def.find('.unit-item').each((i, td) => {
+      let $cells = $def.find('.unit-item');
+      let $firstRow = $cells.first().closest('tr');
+      if ($firstRow.length) $cells = $firstRow.find('.unit-item');
+      $cells.each((i, td) => {
         let n = parseInt($(td).text().replace(/[^\d]/g, ''));
         if (!isNaN(n)) {
           found = true;
@@ -1318,8 +1332,8 @@ window.FarmGod.Main = (function (Library, Translation) {
       });
 
     $(document)
-      .off('keydown')
-      .on('keydown', (event) => {
+      .off('keydown.farmgod')
+      .on('keydown.farmgod', (event) => {
         if ((event.keyCode || event.which) == 13) {
           if ($(event.target).is('input, select, textarea')) return;
           $('.farmGod_icon').first().trigger('click');
@@ -2277,6 +2291,22 @@ window.FarmGod.Main = (function (Library, Translation) {
 
   return {
     init,
+    // internal functions, only for the jsdom tests under test/
+    _internals: {
+      RULES,
+      parseScoutReport,
+      learnFromReports,
+      buildModel,
+      forecastRaw,
+      lootableOf,
+      takeFrom,
+      baseOf,
+      getData,
+      createPlanning,
+      loadHistory,
+      saveHistory,
+      rememberSent,
+    },
   };
 })(window.FarmGod.Library, window.FarmGod.Translation);
 
