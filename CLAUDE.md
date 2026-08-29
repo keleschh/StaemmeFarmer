@@ -108,15 +108,21 @@ Offen: nach ein paar Tagen Statistik anschauen (`localStorage.FarmGodSmart_stats
 und danach die Konstanten anpassen. Bei "Schätzung Ø deutlich > 0" ist `untouchedHours` zu hoch
 oder die Punkte-Produktion zu optimistisch; bei niedrigem "Ø voll" bei B-Angriffen `bFillRatio` hoch.
 
-### 4. Andere Spieler farmen dasselbe Dorf
-Nicht erkennbar; das Skript überschätzt dann. Geklärt: der blaue Punkt (`dots/blue.webp`,
-Tooltip "Erspäht") heißt nur "letzter Bericht ist ein Spähbericht" – kein Signal für fremde
-Angriffe. Einzige Idee bleibt der Vergleich erwartete vs. tatsächliche Beute (Aufgabe 3).
+### 4. Andere Spieler farmen dasselbe Dorf – **Lernen aus jeder Teilbeute (29.08.2026)**
+Symptom des Spielers: "die letzten 10–15 Dörfer waren fast immer leer". Ursache war, dass
+`learnFromReports` nur bei eigenem `sent`-Eintrag (gleiches Gerät) eine Produktionsgrenze lernte.
+Jetzt: jeder neue Teilbeute-Bericht mit bekanntem `emptiedAt` wird geladen (`fetchNewScoutReports`,
+im Budget), `capSent` kommt notfalls aus `haul.capacity`, `prodMin = prodMax = Beute/Stunden` gilt
+geräteunabhängig. `rememberRunningAttacks` übernimmt laufende Angriffe (`{ts, cap}`) als `sent`.
+Gelernte Grenzen verfallen nach `RULES.learnedRateDays` (3) ohne neuen Bericht → neue Probe.
+Der blaue Punkt (`dots/blue.webp`) heißt nur "letzter Bericht ist ein Spähbericht", kein Signal.
+Offen: Ergebnis nach ein paar Tagen an der Auswertungszeile prüfen ("Ø voll" sollte steigen).
 
 ### 5. Tests – **erledigt**, ausbauen bei Bedarf
-52 Tests in `test/` (Parser, getData, createPlanning, kompletter Ablauf, Backfill, Auswertung,
+55 Tests in `test/` (Parser, getData, createPlanning, kompletter Ablauf, Backfill, Auswertung,
 Anfragen-Drosselung `requests.test.js`, Sperrseite `blocked.test.js`, Befehlskapazität `commands.test.js`,
-mehrere Herkunftsdörfer in `planning.test.js` – zweites Dorf per `twoVillages()` aus der Übersichtszeile geklont). `setup.js` setzt `twLib.delayMs`/`retryDelaysMs` auf 0. Beim Erweitern beachten:
+mehrere Herkunftsdörfer in `planning.test.js` – zweites Dorf per `twoVillages()` aus der Übersichtszeile geklont,
+mitgefarmte Dörfer `contested.test.js`). `setup.js` setzt `twLib.delayMs`/`retryDelaysMs` auf 0. Beim Erweitern beachten:
 Seiten-HTML in ein `<div>` wrappen (`$(html).find(...)`), einzelne `<tr>` in `<table><tbody>`;
 Objekte aus dem jsdom-Fenster vor `deepEqual` mit `JSON.parse(JSON.stringify(x))` kopieren
 (anderer Realm); vor `getData` einmal `await tick()`, damit Einheiten-/Weltconfig gecacht sind.
@@ -144,8 +150,9 @@ Spielmeldung, synthetisch in `blocked.test.js`).
   production, minLoot, fallback*, templateFallback, points, score); Hungarian-Strings sind
   doppelt kodiert (Mojibake) – entweder reparieren oder den Block entfernen.
 - Bonusdörfer: der Produktionsbonus wird nicht modelliert (nur Punkte). Spähen korrigiert das.
-- Manuelle Angriffe (nicht aus der Tabelle) haben kein `sent`-Eintrag → daraus wird keine
-  Produktionsgrenze gelernt. Akzeptiert.
+- Manuelle Angriffe: Kapazität kommt aus der Befehlsübersicht, solange der Angriff beim Skriptlauf
+  noch unterwegs ist; die Teilbeute wird in jedem Fall aus dem Bericht gelernt. Ohne `expected` keine
+  Auswertungsstatistik – akzeptiert.
 - Zwei Browser-Tabs überschreiben sich gegenseitig das Gedächtnis. Akzeptiert.
 
 ## Regeln bei Änderungen

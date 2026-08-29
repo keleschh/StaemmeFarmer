@@ -36,7 +36,10 @@
 //    dazu (1 Request pro Bericht, gemeinsames Budget mit den Spähberichten), wird die tatsächliche
 //    Beute daneben gespeichert; die Tabelle zeigt oben "Auswertung: N Angriffe · Ø x % voll ·
 //    Schätzung Ø +y %". Eine Teilbeute verrät außerdem die exakte Produktion seit dem letzten
-//    Leerräumen und wird so ins Modell übernommen.
+//    Leerräumen und wird so ins Modell übernommen. Das gilt für jede Teilbeute, auch wenn der
+//    Angriff von einem anderen Gerät oder von Hand kam: so fallen Dörfer auf, die andere Spieler
+//    mitfarmen (die effektive Produktion sinkt, das Dorf rutscht nach hinten). Nach 3 Tagen ohne
+//    neuen Bericht wird die gelernte Grenze vergessen und das Dorf wieder probiert.
 //  - Der Farm-Assistent zeigt je Dorf nur den letzten Bericht. Für Dörfer ohne Gebäudedaten sucht
 //    das Skript einmal am Tag in der Berichtsübersicht (Angriffe, bis 5 Seiten) den letzten
 //    Spähbericht und übernimmt daraus die Gebäude.
@@ -917,6 +920,10 @@ window.FarmGod.Main = (function (Library, Translation) {
     // Die Dorfliste der Welt (village.txt, auf großen Welten mehrere MB) wird
     // so viele Stunden im Browser zwischengespeichert.
     villageListHours: 3,
+    // Aus Beuteberichten gelernte Produktionsgrenzen (prodMin/prodMax, z. B.
+    // weil andere Spieler dasselbe Dorf farmen) verfallen nach so vielen Tagen
+    // ohne neuen Bericht; das Dorf bekommt dann wieder eine Probe.
+    learnedRateDays: 3,
     // Truppen, die nach der Planung zu Hause stünden, gehen als Probe (Vorlage A)
     // auf Dörfer ohne Bericht, nächste zuerst, bis zu so vielen Stunden Anmarsch.
     probeMaxTravelHours: 3,
@@ -1222,14 +1229,14 @@ window.FarmGod.Main = (function (Library, Translation) {
       let known = h.scoutReportId == f.report_id || (h.noScout || []).indexOf(f.report_id) >= 0;
       if (!known && (f.has_res_info || !f.has_loot_info)) {
         scoutTodo.push(coord);
-      } else if (
-        f.has_loot_info &&
-        f.report_time > (h.lastReport || 0) &&
-        sentListOf(h).some(
+      } else if (f.has_loot_info && f.report_time > (h.lastReport || 0)) {
+        let evaluated = sentListOf(h).some(
           (x) => typeof x.expected === 'number' && Math.abs(x.arrival - f.report_time) < 900
-        )
-      ) {
-        haulTodo.push(coord);
+        );
+        // a partial haul tells the effective production of the village since
+        // it was emptied the last time - no matter who sent the attack (other
+        // device, by hand). That is how villages farmed by others are found.
+        if (evaluated || (!f.max_loot && h.emptiedAt)) haulTodo.push(coord);
       }
     }
     let todo = scoutTodo.concat(haulTodo).slice(0, RULES.maxReportFetches);
@@ -1442,8 +1449,8 @@ window.FarmGod.Main = (function (Library, Translation) {
           landed.length && Math.abs(landed[landed.length - 1].arrival - T) < 900
             ? landed.pop()
             : null;
-        let capSent = own ? own.capacity : 0;
         let haul = farm.has_loot_info && farm.haul ? farm.haul : null;
+        let capSent = own ? own.capacity : haul ? haul.capacity : 0;
 
         // evaluation: what we expected when sending vs. what came back
         if (own && haul && typeof own.expected === 'number') {
@@ -1526,8 +1533,16 @@ window.FarmGod.Main = (function (Library, Translation) {
     }
 
     for (let coord in history) {
+      let h = history[coord];
+      // a learned production limit (often: "others farm here too") is
+      // forgotten after a while without a new report, so the village gets a
+      // new probe once the others may have stopped
+      if ((h.prodMin || h.prodMax) && (h.lastReport || 0) < serverTime - RULES.learnedRateDays * 86400) {
+        delete h.prodMin;
+        delete h.prodMax;
+      }
       // sent attacks that never produced a report (cancelled) expire after 2 days
-      let sentList = sentListOf(history[coord]).filter(
+      let sentList = sentListOf(h).filter(
         (x) => x.arrival > serverTime - 2 * 86400
       );
       history[coord].sent = sentList;
@@ -1847,6 +1862,26 @@ window.FarmGod.Main = (function (Library, Translation) {
   };
 
   const VILLAGES_KEY = 'FarmGodSmart_villages';
+
+  // Running attacks with known capacity (unit columns of the commands
+  // overview) are remembered like own sent attacks, so their reports are
+  // matched later even if the attack was sent from another device or by hand.
+  const rememberRunningAttacks = function (data) {
+    let history = loadHistory();
+    let changed = false;
+    for (let coord in data.commands) {
+      if (!data.farms.farms.hasOwnProperty(coord)) continue;
+      data.commands[coord].forEach((e) => {
+        if (typeof e !== 'object' || !(e.cap > 0)) return;
+        let list = sentListOf(history[coord] || {});
+        if (list.some((x) => Math.abs(x.arrival - e.ts) < 120)) return;
+        if (!history[coord]) history[coord] = {};
+        history[coord].sent = list.concat([{ arrival: e.ts, capacity: e.cap }]).slice(-20);
+        changed = true;
+      });
+    }
+    if (changed) saveHistory(history);
+  };
 
   const getData = function (
     group,
@@ -2222,6 +2257,7 @@ window.FarmGod.Main = (function (Library, Translation) {
           if (data.points.hasOwnProperty(coord))
             data.farms.farms[coord].points = data.points[coord];
         }
+        rememberRunningAttacks(data);
         return fetchNewScoutReports(data.farms.farms)
           .then((farms) =>
             backfillScoutReports(

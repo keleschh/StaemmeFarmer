@@ -75,7 +75,7 @@ describe('Auswertung erwartet vs. tatsächlich', () => {
     assert.equal(JSON.parse(env.window.localStorage.getItem('FarmGodSmart_stats')).length, 2);
   });
 
-  test('Ohne sent-Eintrag wird kein Angriffsbericht geladen', async () => {
+  test('Ohne sent-Eintrag: kein Bericht geladen (Teilbeute nur mit bekanntem emptiedAt)', async () => {
     const env = createEnv({ premium: false });
     await tick();
     await env.internals.getData(0, false, false, true, 0);
