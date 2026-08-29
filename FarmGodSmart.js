@@ -1161,10 +1161,12 @@ window.FarmGod.Main = (function (Library, Translation) {
     }
 
     for (let coord in history) {
-      if (
-        (history[coord].lastReport || 0) < keepAfter &&
-        !sentListOf(history[coord]).length
-      )
+      // sent attacks that never produced a report (cancelled) expire after 2 days
+      let sentList = sentListOf(history[coord]).filter(
+        (x) => x.arrival > serverTime - 2 * 86400
+      );
+      history[coord].sent = sentList;
+      if ((history[coord].lastReport || 0) < keepAfter && !sentList.length)
         delete history[coord];
     }
 
