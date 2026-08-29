@@ -2,8 +2,11 @@
 //
 // Bedienung: Farm-Assistent öffnen, Skript starten, Enter drücken bis die Tabelle leer ist,
 // wiederkommen wenn die Truppen zurück sind ("Truppen zurück ab" steht oben in der Tabelle).
-// Der Dialog mit den drei Einstellungen (Gruppe, max. Entfernung, Dörfer ohne Bericht bis X
-// Punkte) kommt nur beim ersten Start; danach über den Link "Einstellungen" in der Tabelle.
+// Der Dialog mit den zwei Einstellungen (Gruppe, Dörfer ohne Bericht bis X Punkte) kommt nur
+// beim ersten Start; danach über den Link "Einstellungen" in der Tabelle. Eine maximale
+// Entfernung gibt es nicht mehr: Dörfer ohne Bericht werden bis zur Probe-Grenze (3 Stunden
+// Anmarsch) betrachtet, bekannte Dörfer so weit, wie sich ein voller B-Trupp nach der
+// Mindestbeute-Regel noch lohnen kann.
 //
 // Was das Skript rechnet:
 //  - Für jedes Dorf wird geschätzt, wie viel bis zur Ankunft plünderbar ist. Grundlage ist der
@@ -1208,7 +1211,7 @@ window.FarmGod.Main = (function (Library, Translation) {
   const loadSettings = function () {
     let options = JSON.parse(localStorage.getItem(SETTINGS_KEY)) || null;
     if (!options) return null;
-    let defaults = { optionGroup: 0, optionDistance: 10, optionNewbarbsMaxPoints: 500 };
+    let defaults = { optionGroup: 0, optionNewbarbsMaxPoints: 500 };
     for (let key in defaults) {
       if (typeof options[key] === 'undefined') options[key] = defaults[key];
     }
@@ -1247,7 +1250,6 @@ window.FarmGod.Main = (function (Library, Translation) {
         .on('click', () => {
           let options = {
             optionGroup: parseInt($('.optionGroup').val()) || 0,
-            optionDistance: parseFloat($('.optionDistance').val()) || 10,
             optionNewbarbsMaxPoints: Math.max(
               0,
               parseFloat($('.optionNewbarbsMaxPoints').val()) || 0
@@ -1278,7 +1280,7 @@ window.FarmGod.Main = (function (Library, Translation) {
       options.optionNewbarbsMaxPoints
     )
       .then((data) => {
-        let plan = createPlanning({ distance: options.optionDistance }, data);
+        let plan = createPlanning({}, data);
         $('.farmGodContent').remove();
         $('#am_widget_Farm').first().before(buildTable(plan));
 
@@ -1365,7 +1367,6 @@ window.FarmGod.Main = (function (Library, Translation) {
   const buildOptions = function () {
     let options = loadSettings() || {
       optionGroup: 0,
-      optionDistance: 10,
       optionNewbarbsMaxPoints: 500,
     };
 
@@ -1376,9 +1377,6 @@ window.FarmGod.Main = (function (Library, Translation) {
                 ${warningHtml()}
                 <div style="width:90%;margin:auto;background: url(\'graphic/index/main_bg.jpg\') 100% 0% #E3D5B3;border: 1px solid #7D510F;border-collapse: separate !important;border-spacing: 0px !important;"><table class="vis" style="width:100%;text-align:left;font-size:11px;">
                   <tr><td>${t.options.group}</td><td>${groupSelect}</td></tr>
-                  <tr><td>${t.options.distance
-          }</td><td><input type="text" size="5" class="optionDistance" value="${options.optionDistance
-          }"></td></tr>
                   <tr><td>${t.options.newbarbsMaxPoints
           }</td><td><input type="text" size="5" class="optionNewbarbsMaxPoints" value="${options.optionNewbarbsMaxPoints
           }"></td></tr>
@@ -1902,12 +1900,33 @@ window.FarmGod.Main = (function (Library, Translation) {
       return false;
     };
 
+    // Radius derived from the rules: villages without a report only up to the
+    // probe limit, known villages as far as a full B (or A) trip can still
+    // reach the minimum loot per hour of travel.
+    const refSpeed = (templateA || templateB || {}).speed || 10; // min per field
+    const fieldsFor = (hours) => (hours * 60) / refSpeed;
+    const biggestCapacity = Math.max(
+      templateA ? templateA.capacity || 0 : 0,
+      templateB ? templateB.capacity || 0 : 0
+    );
+    const maxProbeFields = fieldsFor(RULES.probeMaxTravelHours);
+    const maxKnownFields = fieldsFor(
+      Math.max(
+        RULES.probeMaxTravelHours,
+        minScore > 0 ? biggestCapacity / (2 * minScore) : 0
+      )
+    );
+
     for (let prop in data.villages) {
       let origin = data.villages[prop];
       let plannedForOrigin = 0;
       let candidates = Object.keys(data.farms.farms)
         .map((coord) => ({ coord, dis: lib.getDistance(prop, coord) }))
-        .filter((c) => c.dis < options.distance)
+        .filter((c) =>
+          data.farms.farms[c.coord].is_new
+            ? c.dis <= maxProbeFields
+            : c.dis <= maxKnownFields
+        )
         .filter((c) => !((history[c.coord] || {}).troops > 0)); // scouted troops
 
       // ---- pass 1: greedy by loot per hour of travel, template A
