@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { createEnv, fixture, tick } from './setup.js';
+import { createEnv, fixture, tick, settle } from './setup.js';
 
 const plain = (x) => JSON.parse(JSON.stringify(x));
 const ts = (h, m, s) => Math.round(new Date(2026, 7, 29, h, m, s).getTime() / 1000);
@@ -94,7 +94,7 @@ describe('Auswertung erwartet vs. tatsächlich', () => {
 
   test('Tabelle zeigt die Auswertungszeile', async () => {
     const env = createEnv({ settings: { optionGroup: 0, optionNewbarbsMaxPoints: 500 }, history });
-    await tick(60);
+    await settle(env);
     const text = env.$('.farmGodContent').text();
     assert.ok(text.includes('Auswertung'), text.slice(0, 200));
     assert.ok(text.includes('2 Angriffe'));
@@ -102,7 +102,7 @@ describe('Auswertung erwartet vs. tatsächlich', () => {
 
   test('sendFarm merkt sich die erwartete Beute', async () => {
     const env = createEnv({ settings: { optionGroup: 0, optionNewbarbsMaxPoints: 500 } });
-    await tick(60);
+    await settle(env);
     const $first = env.$('.farmGod_icon').first();
     $first.trigger('click');
     await tick();

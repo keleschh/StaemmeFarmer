@@ -133,6 +133,7 @@ export function createEnv(opts = {}) {
     if (url.includes('village.txt')) return opts.villageTxt !== undefined ? opts.villageTxt : fixture('village.txt');
     if (url.includes('mode=combined')) return wrap(opts.combinedHtml || fixture('overview_combined.html'));
     if (url.includes('mode=commands')) return wrap(fixture('overview_commands.html'));
+    if (url.includes('screen=report&mode=attack')) return wrap(opts.reportList || fixture('report_list_attack.html'));
     if (url.includes('screen=am_farm')) return wrap(farmPage);
     let m = url.match(/screen=report&mode=all&view=(\d+)/);
     if (m && reports[m[1]]) return wrap(reports[m[1]]);
@@ -158,6 +159,15 @@ export function createEnv(opts = {}) {
 }
 
 export const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
+
+// waits until init() has rendered the table (or failed), max 3 s
+export async function settle(env) {
+  for (let i = 0; i < 150; i++) {
+    await tick(20);
+    if (env.$('.farmGodContent table').length || env.window.messages.error.length) return;
+  }
+  throw new Error('FarmGod table did not appear');
+}
 
 // unix seconds of the page's server time (29/08/2026 17:16:18 local)
 export function serverTimeSeconds(env) {

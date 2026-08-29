@@ -37,6 +37,11 @@ Automatisierung des Sendens, keine Timer, keine Hintergrundschleifen. (Skriptreg
         emptiedAt, lastReport, lastCap, sent:[{arrival,capacity,expected}], troops, noScout }`.
    - Auswertung in localStorage `FarmGodSmart_stats`: Liste `{time, coord, expected, actual, capacity, full}`
      (max. `RULES.maxStats`), `statsSummary()` → Zeile über der Tabelle.
+   - `parseReportList` + `backfillScoutReports`: der Farm-Assistent zeigt je Dorf nur den letzten Bericht;
+     für Dörfer ohne `buildings` wird höchstens alle `RULES.backfillHours` (24 h, Zeitstempel in
+     `FarmGodSmart_backfill`) die Berichtsübersicht `screen=report&mode=attack` (bis `backfillPages`
+     Seiten, Paginierung `&from=N`) nach dem letzten Bericht mit Späher-Icon durchsucht und die
+     Gebäude daraus übernommen (Rest-Budget von `maxReportFetches`).
    - Rohstoffmodell: `buildModel` (Produktion/Versteck/Speicher je Rohstoff, exakt aus gespähten
      Gebäuden, sonst aus Punkten), `forecastRaw`, `lootableOf`, `takeFrom`, `baseOf`.
    - `parseScoutReport`, `parseHaul` (`#attack_results`), `fetchNewScoutReports` (max.
@@ -71,6 +76,9 @@ Echtes HTML liegt unter `test/fixtures/`, die Tests laufen dagegen. Verifiziert:
   `village.txt` = `id,name,x,y,player_id,points,rank`; `get_unit_info` = XML mit `speed`/`carry`.
 - Dorfübersicht `#combined_table`: 11 `td.unit-item` (ohne snob/militia); Vorlagen-Formular
   11 Einheiten-Inputs; `game_data.units` hat 13 Einträge. Die Zuordnung per Index passt.
+- Berichtsübersicht `#report_list tr`: Späher-Icon `command/spy.webp`, Ergebnis `dots/*.webp`, Titel
+  "… späht Barbarendorf (600|417) K46" (letzte Koordinate = Ziel), Datum `29.08.26 17:53`, Seiten `&from=21`.
+  Die `max_loot`-Tooltips dort enthalten die Beutezahlen (bisher ungenutzt).
 Noch ohne Fixture: gelbe/rote Zeile, "am 27.08. um …" (nur synthetisch getestet), mehrseitiger
 Farm-Assistent, Angriffsbericht **mit** Spähern (siehe 2).
 

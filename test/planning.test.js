@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { createEnv, fixture, tick, serverTimeSeconds } from './setup.js';
+import { createEnv, fixture, tick, settle, serverTimeSeconds } from './setup.js';
 
 const plain = (x) => JSON.parse(JSON.stringify(x));
 
@@ -54,7 +54,7 @@ describe('Kompletter Ablauf: init() -> Tabelle -> Klick', () => {
     const env = createEnv({ settings: { optionGroup: 0, optionNewbarbsMaxPoints: 500 } });
     const { $, window } = env;
     // init() ran at load and waits for unit info + world config
-    await tick(50);
+    await settle(env);
     const $icons = $('.farmGod_icon');
     assert.ok($icons.length > 0, 'Tabelle mit Angriffen vorhanden');
     assert.ok($('.farmGodContent').text().includes('voll'), 'Beute-Spalte zeigt voll/nicht voll');
@@ -80,7 +80,7 @@ describe('Kompletter Ablauf: init() -> Tabelle -> Klick', () => {
   test('Enter sendet den ersten Angriff, Enter im Eingabefeld nicht', async () => {
     const env = createEnv({ settings: { optionGroup: 0, optionNewbarbsMaxPoints: 500 } });
     const { $, window } = env;
-    await tick(50);
+    await settle(env);
     const n = $('.farmGod_icon').length;
     assert.ok(n > 0);
     $('body').append('<input id="someInput">');
@@ -94,7 +94,7 @@ describe('Kompletter Ablauf: init() -> Tabelle -> Klick', () => {
 
   test('Ohne Premium: nur Fehlermeldung', async () => {
     const env = createEnv({ premium: false });
-    await tick(50);
+    await settle(env);
     assert.equal(env.window.messages.error.length, 1);
     assert.equal(env.$('.farmGod_icon').length, 0);
   });

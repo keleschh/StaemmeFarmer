@@ -34,6 +34,9 @@
 //    Beute daneben gespeichert; die Tabelle zeigt oben "Auswertung: N Angriffe · Ø x % voll ·
 //    Schätzung Ø +y %". Eine Teilbeute verrät außerdem die exakte Produktion seit dem letzten
 //    Leerräumen und wird so ins Modell übernommen.
+//  - Der Farm-Assistent zeigt je Dorf nur den letzten Bericht. Für Dörfer ohne Gebäudedaten sucht
+//    das Skript einmal am Tag in der Berichtsübersicht (Angriffe, bis 5 Seiten) den letzten
+//    Spähbericht und übernimmt daraus die Gebäude.
 //  - Gedächtnis pro Dorf im Browser (localStorage), 14 Tage nach dem letzten Bericht gelöscht.
 //    Feste Regeln stehen im Block RULES weiter unten.
 // Das Senden selbst ist unverändert: jede Farm braucht weiterhin einen Klick bzw. Enter.
@@ -864,6 +867,12 @@ window.FarmGod.Main = (function (Library, Translation) {
     maxReportFetches: 10,
     // So viele ausgewertete Angriffe (erwartet vs. tatsächlich) werden behalten.
     maxStats: 300,
+    // Alte Spähberichte nachladen: der Farm-Assistent zeigt nur den letzten
+    // Bericht je Dorf; für Dörfer ohne Gebäudedaten wird höchstens alle
+    // backfillHours Stunden die Angriffsbericht-Übersicht (so viele Seiten)
+    // nach dem letzten Spähbericht durchsucht. Berichte zählen zum Budget.
+    backfillHours: 24,
+    backfillPages: 5,
     // Truppen, die nach der Planung zu Hause stünden, gehen als Probe (Vorlage A)
     // auf Dörfer ohne Bericht, nächste zuerst, bis zu so vielen Stunden Anmarsch.
     probeMaxTravelHours: 3,
@@ -1180,6 +1189,7 @@ window.FarmGod.Main = (function (Library, Translation) {
       }
     }
     let todo = scoutTodo.concat(haulTodo).slice(0, RULES.maxReportFetches);
+    Object.defineProperty(farms, '_fetched', { value: todo.length, enumerable: false, configurable: true });
     if (!todo.length) return Promise.resolve(farms);
 
     return Promise.all(
@@ -1203,6 +1213,119 @@ window.FarmGod.Main = (function (Library, Translation) {
           )
       )
     ).then(() => farms);
+  };
+
+  // report overview (screen=report&mode=attack): reports that contain scouts,
+  // newest first, plus the "from" offset of the next page
+  const parseReportList = function ($html, currentFrom) {
+    currentFrom = currentFrom || 0;
+    let reports = [];
+    $html.find('#report_list tr').each((i, tr) => {
+      let $tr = $(tr);
+      if (!$tr.find('img[src*="command/spy"]').length) return;
+      let dot = ($tr.find('img[src*="graphic/dots/"]').attr('src') || '').match(/dots\/([a-z_]+)/);
+      let color = dot ? dot[1] : '';
+      if (/red/.test(color)) return; // scouts lost, no data
+      let $link = $tr.find('a[href*="view="]').first();
+      let id = parseInt(($link.attr('href') || '').match(/view=(\d+)/) ? RegExp.$1 : 0) || 0;
+      let coord = $link.text().toCoord();
+      let d = $tr.find('td').last().text().trim().match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})\s+(\d{1,2}):(\d{2})/);
+      if (!id || !coord || !d) return;
+      let year = parseInt(d[3]);
+      if (year < 100) year += 2000;
+      let time = Math.round(
+        new Date(year, parseInt(d[2]) - 1, parseInt(d[1]), parseInt(d[4]), parseInt(d[5])).getTime() / 1000
+      );
+      reports.push({ coord: coord, reportId: id, time: time, color: color });
+    });
+    // next page = smallest "from" offset behind the current one
+    let nextFrom = null;
+    $html.find('a.paged-nav-item').each((i, a) => {
+      let m = ($(a).attr('href') || '').match(/from=(\d+)/);
+      if (m) {
+        let from = parseInt(m[1]);
+        if (from > currentFrom && (nextFrom === null || from < nextFrom)) nextFrom = from;
+      }
+    });
+    return { reports: reports, nextFrom: nextFrom };
+  };
+
+  const BACKFILL_KEY = 'FarmGodSmart_backfill';
+
+  // The Farm Assistant only shows the last report per village, so scout
+  // reports that were followed by attacks before the script ran are never
+  // seen. Once a day: look through the report overview for the newest scout
+  // report of every farm without building data and read the buildings.
+  const backfillScoutReports = function (farms, serverTime, budget) {
+    let history = loadHistory();
+    let wanted = {};
+    for (let coord in farms) {
+      let f = farms[coord];
+      if (f.is_new) continue;
+      let h = history[coord] || {};
+      if (!h.buildings) wanted[coord] = true;
+    }
+    if (!Object.keys(wanted).length || budget <= 0) return Promise.resolve(farms);
+    let last = 0;
+    try {
+      last = (JSON.parse(localStorage.getItem(BACKFILL_KEY)) || {}).time || 0;
+    } catch (e) {
+      /* ignore */
+    }
+    if (serverTime - last < RULES.backfillHours * 3600) return Promise.resolve(farms);
+    try {
+      localStorage.setItem(BACKFILL_KEY, JSON.stringify({ time: serverTime }));
+    } catch (e) {
+      /* ignore */
+    }
+
+    let found = {};
+    let loadPage = (from, pagesLeft) => {
+      if (pagesLeft <= 0) return Promise.resolve();
+      let url = game_data.link_base_pure + 'report&mode=attack' + (from ? '&from=' + from : '');
+      return twLib.get(url).then(
+        (html) => {
+          let list = parseReportList($(html), from);
+          list.reports.forEach((r) => {
+            if (wanted[r.coord] && !found[r.coord]) found[r.coord] = r;
+          });
+          let allFound = Object.keys(wanted).every((c) => found[c]);
+          if (list.nextFrom === null || allFound) return;
+          return loadPage(list.nextFrom, pagesLeft - 1);
+        },
+        () => {}
+      );
+    };
+
+    return loadPage(0, RULES.backfillPages).then(() => {
+      let todo = Object.values(found).slice(0, budget);
+      return Promise.all(
+        todo.map((r) =>
+          twLib.get(game_data.link_base_pure + 'report&mode=all&view=' + r.reportId).then(
+            (html) => {
+              let parsed = parseScoutReport($(html));
+              if (!parsed.buildings) return;
+              let hist = loadHistory();
+              let h = hist[r.coord] || {};
+              h.buildings = Object.assign(h.buildings || {}, parsed.buildings);
+              h.scoutReportId = r.reportId;
+              h.scoutTime = r.time;
+              h.scoutPoints = (farms[r.coord] || {}).points || h.scoutPoints || 0;
+              if (typeof parsed.troops === 'number' && typeof h.troops !== 'number') h.troops = parsed.troops;
+              // the stock was estimated with "no hiding place" so far: a village
+              // that was emptied by a partial haul is at the hiding place now
+              let m = buildModel(farms[r.coord] || {}, h, 1);
+              if (h.base && h.emptiedAt && h.base.time === h.emptiedAt) {
+                h.base.raw = h.base.raw.map((v, i) => Math.max(v, m.hidden[i]));
+              }
+              hist[r.coord] = h;
+              saveHistory(hist);
+            },
+            () => {}
+          )
+        )
+      );
+    }).then(() => farms);
   };
 
   // Update the memory with the newest Farm Assistant reports (and scout data).
@@ -1983,7 +2106,15 @@ window.FarmGod.Main = (function (Library, Translation) {
           if (data.points.hasOwnProperty(coord))
             data.farms.farms[coord].points = data.points[coord];
         }
-        return fetchNewScoutReports(data.farms.farms).then(() => data);
+        return fetchNewScoutReports(data.farms.farms)
+          .then((farms) =>
+            backfillScoutReports(
+              farms,
+              Math.round(lib.getCurrentServerTime() / 1000),
+              RULES.maxReportFetches - (farms._fetched || 0)
+            )
+          )
+          .then(() => data);
       });
   };
 
@@ -2469,6 +2600,8 @@ window.FarmGod.Main = (function (Library, Translation) {
       saveHistory,
       rememberSent,
       parseHaul,
+      parseReportList,
+      backfillScoutReports,
       loadStats,
       statsSummary,
     },
