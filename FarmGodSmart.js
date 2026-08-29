@@ -872,11 +872,16 @@ window.FarmGod.Main = (function (Library, Translation) {
 
   // Called after an attack was sent from the table: remember what will
   // arrive when, so the next report can be interpreted.
+  const sentListOf = (h) =>
+    Array.isArray(h.sent) ? h.sent : h.sent ? [h.sent] : [];
+
   const rememberSent = function (coord, arrival, capacity) {
     if (!coord) return;
     let history = loadHistory();
     if (!history[coord]) history[coord] = {};
-    history[coord].sent = { arrival: arrival, capacity: capacity };
+    let list = sentListOf(history[coord]);
+    list.push({ arrival: arrival, capacity: capacity });
+    history[coord].sent = list.slice(-20);
     saveHistory(history);
   };
 
@@ -1087,19 +1092,38 @@ window.FarmGod.Main = (function (Library, Translation) {
       let isNewReport = T > 0 && T > (h.lastReport || 0);
       if (isNewReport) {
         let m = buildModel(farm, h, worldSpeed);
-        let capSent =
-          h.sent && Math.abs(h.sent.arrival - T) < 900 ? h.sent.capacity : 0;
-        let base = baseOf(h, T, m);
-        let rawAtT = forecastRaw(m, base.raw, (T - base.time) / 3600);
+
+        // own attacks that landed up to this report: the last one is the
+        // attack this report belongs to, earlier ones took their share before
+        let sentList = sentListOf(h);
+        let landed = sentList
+          .filter((x) => x.arrival <= T + 900)
+          .sort((a, b) => a.arrival - b.arrival);
+        let future = sentList.filter((x) => x.arrival > T + 900);
+        let own =
+          landed.length && Math.abs(landed[landed.length - 1].arrival - T) < 900
+            ? landed.pop()
+            : null;
+        let capSent = own ? own.capacity : 0;
+
+        let cur = baseOf(h, T, m);
+        landed.forEach((x) => {
+          if (x.arrival <= cur.time) return;
+          let rawAt = forecastRaw(m, cur.raw, (x.arrival - cur.time) / 3600);
+          cur = { time: x.arrival, raw: takeFrom(m, rawAt, x.capacity) };
+        });
+        let rawAtT = forecastRaw(m, cur.raw, (T - cur.time) / 3600);
         if (scout && scout.res) rawAtT = scout.res.slice();
 
         if (farm.has_loot_info) {
           if (h.emptiedAt && T > h.emptiedAt && capSent > 0) {
             let hours = (T - h.emptiedAt) / 3600;
+            // other own attacks in between make an upper bound unreliable
+            let others = landed.some((x) => x.arrival > h.emptiedAt);
             if (hours >= 0.25) {
               let rate = capSent / hours;
               if (farm.max_loot) h.prodMin = Math.max(h.prodMin || 0, rate);
-              else h.prodMax = Math.min(h.prodMax || Infinity, rate);
+              else if (!others) h.prodMax = Math.min(h.prodMax || Infinity, rate);
               if (h.prodMin && h.prodMax && h.prodMin > h.prodMax) {
                 if (farm.max_loot) h.prodMax = h.prodMin;
                 else h.prodMin = h.prodMax;
@@ -1118,7 +1142,7 @@ window.FarmGod.Main = (function (Library, Translation) {
           h.base = { time: T, raw: rawAtT };
         }
         h.lastReport = T;
-        h.sent = null;
+        h.sent = future;
       } else if (scout && scout.res && scout.reportId != h.scoutRawId) {
         // same report seen before, but its scout data was loaded just now
         let m = buildModel(farm, h, worldSpeed);
@@ -1137,7 +1161,10 @@ window.FarmGod.Main = (function (Library, Translation) {
     }
 
     for (let coord in history) {
-      if ((history[coord].lastReport || 0) < keepAfter && !history[coord].sent)
+      if (
+        (history[coord].lastReport || 0) < keepAfter &&
+        !sentListOf(history[coord]).length
+      )
         delete history[coord];
     }
 
@@ -1790,9 +1817,8 @@ window.FarmGod.Main = (function (Library, Translation) {
       (data.commands[coord] || []).map((e) => {
         if (typeof e === 'object') return e;
         let h = history[coord] || {};
-        let cap =
-          h.sent && Math.abs(h.sent.arrival - e) < 900 ? h.sent.capacity : capacityA;
-        return { ts: e, cap: cap };
+        let match = sentListOf(h).find((x) => Math.abs(x.arrival - e) < 900);
+        return { ts: e, cap: match ? match.capacity : capacityA };
       });
 
     // Loot we expect to find at time t: last known state, production since,
