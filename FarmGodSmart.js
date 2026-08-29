@@ -23,6 +23,9 @@
 //    Leerfarmen wieder etwas angesammelt hat, bekommt A. Dörfer ohne Bericht bekommen immer erst A.
 //  - Das Skript merkt sich pro Dorf, wann es leer war und ob unsere Beutezüge voll waren, und leitet
 //    daraus Ober-/Untergrenzen für die echte Produktion ab (lernt also ohne Späher mit).
+//  - Spähberichte werden ausgewertet (1 Request pro neuem Bericht): Rohstoffe und Gebäude liefern
+//    exakte Produktion, Versteck und Speicher. Ab dann rechnet das Skript für dieses Dorf pro
+//    Rohstoffart, was tatsächlich plünderbar ist. Ohne Spähbericht bleibt die Punkteschätzung.
 //  - Tabelle zeigt pro Farm, wann die Truppen wieder zu Hause sind.
 //  - Tabelle zeigt erwartete Beute, Score und die letzte Beute (voll / nicht voll, wie lange her).
 //  - Barbaren-/Bonusdörfer ohne Bericht können mit eingeplant werden (Dorfliste der Welt,
@@ -584,6 +587,7 @@ window.FarmGod.Translation = (function () {
         fallbackTag: 'fallback',
         lootNew: 'new (no report yet)',
         back: 'Back at',
+        scoutedTitle: 'scouted: production, hiding place and warehouse are known exactly',
         settings: 'Settings',
         attacks: 'attacks',
         totalLoot: 'expected loot',
@@ -648,6 +652,7 @@ window.FarmGod.Translation = (function () {
         fallbackTag: 'fallback',
         lootNew: 'new (no report yet)',
         back: 'Back at',
+        scoutedTitle: 'scouted: production, hiding place and warehouse are known exactly',
         settings: 'Settings',
         attacks: 'attacks',
         totalLoot: 'expected loot',
@@ -710,6 +715,7 @@ window.FarmGod.Translation = (function () {
         fallbackTag: 'fallback',
         lootNew: 'new (no report yet)',
         back: 'Back at',
+        scoutedTitle: 'scouted: production, hiding place and warehouse are known exactly',
         settings: 'Settings',
         attacks: 'attacks',
         totalLoot: 'expected loot',
@@ -773,6 +779,7 @@ window.FarmGod.Translation = (function () {
         fallbackTag: 'Fallback',
         lootNew: 'neu (noch kein Bericht)',
         back: 'Zurück um',
+        scoutedTitle: 'gespäht: Produktion, Versteck und Speicher sind exakt bekannt',
         settings: 'Einstellungen',
         attacks: 'Angriffe',
         totalLoot: 'erwartete Beute',
@@ -830,10 +837,19 @@ window.FarmGod.Main = (function (Library, Translation) {
     // Ein Dorf, das wir noch nie leer gesehen haben, hat vermutlich so viele
     // Stunden Produktion angesammelt (grobe Annahme für den Vorrat).
     untouchedHours: 36,
+    // Wie viele neue Spähberichte pro Durchlauf höchstens geladen werden.
+    maxReportFetches: 10,
   };
 
-  // Pro-Dorf-Gedächtnis (localStorage): wann war das Dorf leer, welche
-  // Beutezüge waren voll -> Grenzen für die echte Produktion.
+  // Produktion / Versteck / Speicher je Stufe (Speed 1)
+  const PROD_BY_LEVEL = [5, 30, 35, 41, 47, 55, 64, 74, 86, 100, 117, 136, 158, 184, 214, 249, 289, 337, 391, 455, 530, 616, 717, 833, 969, 1127, 1311, 1525, 1774, 2063, 2400];
+  const HIDE_BY_LEVEL = [0, 150, 200, 267, 356, 474, 632, 843, 1125, 1500, 2000];
+  const WAREHOUSE_BY_LEVEL = [1000, 1000, 1229, 1512, 1859, 2285, 2810, 3454, 4247, 5222, 6420, 7893, 9705, 11932, 14670, 18037, 22177, 27266, 33523, 41217, 50675, 62305, 76604, 94184, 115798, 142373, 175047, 215219, 264611, 325337, 400000];
+  const RES = ['wood', 'stone', 'iron'];
+
+  // Pro-Dorf-Gedächtnis (localStorage): letzter bekannter Rohstoffstand
+  // ("base": Zeitpunkt + Rohstoffe je Art), Gebäude aus Spähberichten,
+  // gelernte Grenzen für die Produktion, zuletzt geschickter Angriff.
   const HISTORY_KEY = 'FarmGodSmart_history';
 
   const loadHistory = function () {
@@ -862,47 +878,236 @@ window.FarmGod.Main = (function (Library, Translation) {
     saveHistory(history);
   };
 
-  // Update the memory with the newest Farm Assistant reports.
-  const learnFromReports = function (farms, serverTime) {
+  /**** Rohstoff-Modell pro Dorf ****/
+  const levelOf = (buildings, key, max) =>
+    Math.min(max, Math.max(0, parseInt((buildings || {})[key]) || 0));
+
+  // Punkte-Schätzung (gesamt), korrigiert durch gelernte Grenzen
+  const estimatedTotalProduction = function (farm, h, worldSpeed) {
+    let prod =
+      (farm.points
+        ? lib.estimateProduction(farm.points)
+        : RULES.defaultProduction) * worldSpeed;
+    if (h.prodMin) prod = Math.max(prod, h.prodMin);
+    if (h.prodMax) prod = Math.min(prod, h.prodMax);
+    return prod;
+  };
+
+  // Produktion, Versteck und Speicher je Rohstoffart: exakt aus gespähten
+  // Gebäuden, sonst grob aus den Punkten (gleichmäßig verteilt, kein Versteck)
+  const buildModel = function (farm, h, worldSpeed) {
+    let b = h.buildings;
+    if (b && RES.some((k) => typeof b[k] !== 'undefined')) {
+      let hidden = HIDE_BY_LEVEL[levelOf(b, 'hide', 10)];
+      let cap = WAREHOUSE_BY_LEVEL[Math.max(1, levelOf(b, 'storage', 30))];
+      return {
+        exact: true,
+        prod: RES.map((k) => PROD_BY_LEVEL[levelOf(b, k, 30)] * worldSpeed),
+        hidden: [hidden, hidden, hidden],
+        cap: [cap, cap, cap],
+      };
+    }
+    let total = estimatedTotalProduction(farm, h, worldSpeed);
+    let prod = [total / 3, total / 3, total / 3];
+    return {
+      exact: false,
+      prod: prod,
+      hidden: [0, 0, 0],
+      cap: prod.map((p) => p * RULES.untouchedHours),
+    };
+  };
+
+  const forecastRaw = (m, raw, hours) =>
+    raw.map((v, i) => Math.min(m.cap[i], v + m.prod[i] * Math.max(0, hours)));
+  const lootableOf = (m, raw) =>
+    raw.reduce((sum, v, i) => sum + Math.max(0, v - m.hidden[i]), 0);
+  // remove `amount` loot, proportionally from what lies above the hiding place
+  const takeFrom = (m, raw, amount) => {
+    let lootable = raw.map((v, i) => Math.max(0, v - m.hidden[i]));
+    let total = lootable.reduce((a, b) => a + b, 0);
+    if (total <= 0) return raw.slice();
+    let take = Math.min(amount, total);
+    return raw.map((v, i) => v - take * (lootable[i] / total));
+  };
+  // last known state; else "was empty at emptiedAt" (older memory format);
+  // else "has been accumulating for untouchedHours"
+  const baseOf = (h, t, m) => {
+    if (h.base && Array.isArray(h.base.raw) && h.base.time <= t)
+      return { time: h.base.time, raw: h.base.raw.slice() };
+    if (h.emptiedAt && h.emptiedAt <= t)
+      return { time: h.emptiedAt, raw: m.hidden.slice() };
+    return { time: t - RULES.untouchedHours * 3600, raw: [0, 0, 0] };
+  };
+
+  /**** Spähberichte ****/
+  // reads resources and building levels from a report page
+  const parseScoutReport = function ($html) {
+    let result = { res: null, buildings: null };
+
+    let $res = $html.find('#attack_spy_resources');
+    if ($res.length) {
+      let res = {};
+      RES.forEach((k) => {
+        let $icon = $res.find(`.icon.header.${k}`).first();
+        if (!$icon.length) return;
+        let node = $icon[0].nextSibling;
+        while (node && !/\d/.test(node.textContent || '')) node = node.nextSibling;
+        let n = node ? parseInt((node.textContent || '').replace(/[^\d]/g, '')) : NaN;
+        if (!isNaN(n)) res[k] = n;
+      });
+      if (Object.keys(res).length < 3) {
+        let nums = ($res.text().match(/\d[\d.]*/g) || []).map((x) =>
+          parseInt(x.replace(/\./g, ''))
+        );
+        if (nums.length >= 3) res = { wood: nums[0], stone: nums[1], iron: nums[2] };
+      }
+      if (Object.keys(res).length === 3) result.res = [res.wood, res.stone, res.iron];
+    }
+
+    let buildings = {};
+    let json = $html.find('#attack_spy_building_data').val();
+    if (json) {
+      try {
+        JSON.parse(json).forEach((b) => {
+          if (b.id) buildings[b.id] = parseInt(b.level) || 0;
+        });
+      } catch (e) {
+        /* fall through to text parsing */
+      }
+    }
+    if (Object.keys(buildings).length === 0) {
+      const names = {
+        holzfäller: 'wood', 'timber camp': 'wood', houthakker: 'wood',
+        lehmgrube: 'stone', 'clay pit': 'stone', leemgroeve: 'stone',
+        eisenmine: 'iron', 'iron mine': 'iron', ijzermijn: 'iron',
+        speicher: 'storage', warehouse: 'storage', opslagplaats: 'storage',
+        versteck: 'hide', 'hiding place': 'hide', schuilplaats: 'hide',
+        wall: 'wall', muur: 'wall',
+      };
+      $html
+        .find('#attack_spy_buildings_left tr, #attack_spy_buildings_right tr')
+        .each((i, tr) => {
+          let $tds = $(tr).find('td');
+          if ($tds.length < 2) return;
+          let key = null;
+          let img = $tds.first().find('img').attr('src') || '';
+          let m = img.match(/buildings\/(?:mid\/|big\/)?([a-z_]+?)\d*\.(?:png|webp)/);
+          if (m) key = m[1];
+          if (!key) key = names[$tds.first().text().trim().toLowerCase()] || null;
+          let level = parseInt($tds.eq(1).text());
+          if (key && !isNaN(level)) buildings[key] = level;
+        });
+    }
+    if (Object.keys(buildings).length) result.buildings = buildings;
+
+    return result;
+  };
+
+  // loads reports that may contain scout info and are not known yet
+  const fetchNewScoutReports = function (farms) {
+    let history = loadHistory();
+    let todo = [];
+    for (let coord in farms) {
+      let f = farms[coord];
+      if (!f.report_id) continue;
+      let h = history[coord] || {};
+      if (h.scoutReportId == f.report_id) continue;
+      if ((h.noScout || []).indexOf(f.report_id) >= 0) continue;
+      if (f.has_res_info || !f.has_loot_info) todo.push(coord);
+    }
+    todo = todo.slice(0, RULES.maxReportFetches);
+    if (!todo.length) return Promise.resolve(farms);
+
+    return Promise.all(
+      todo.map((coord) =>
+        twLib
+          .get(game_data.link_base_pure + 'report&mode=all&view=' + farms[coord].report_id)
+          .then(
+            (html) => {
+              let parsed = parseScoutReport($(html));
+              farms[coord].scout = {
+                reportId: farms[coord].report_id,
+                res: parsed.res,
+                buildings: parsed.buildings,
+              };
+            },
+            () => {}
+          )
+      )
+    ).then(() => farms);
+  };
+
+  // Update the memory with the newest Farm Assistant reports (and scout data).
+  const learnFromReports = function (farms, serverTime, capacityA, worldSpeed) {
     let history = loadHistory();
     let keepAfter = serverTime - 14 * 86400;
 
     for (let coord in farms) {
       let farm = farms[coord];
-      if (!farm.has_loot_info || !farm.report_time) continue;
+      farm.coord = coord;
       let h = history[coord] || {};
-      if (farm.report_time <= (h.lastReport || 0)) continue; // already seen
+      let T = farm.report_time;
+      let scout = farm.scout || null;
 
-      // capacity of the attack this report belongs to (if we sent it)
-      let capSent =
-        h.sent && Math.abs(h.sent.arrival - farm.report_time) < 900
-          ? h.sent.capacity
-          : 0;
-
-      if (h.emptiedAt && farm.report_time > h.emptiedAt && capSent > 0) {
-        let hours = (farm.report_time - h.emptiedAt) / 3600;
-        if (hours >= 0.25) {
-          let rate = capSent / hours;
-          if (farm.max_loot) {
-            // haul was full: the village produced at least that much
-            h.prodMin = Math.max(h.prodMin || 0, rate);
-          } else {
-            // haul not full: it produced less than the capacity
-            h.prodMax = Math.min(h.prodMax || Infinity, rate);
-          }
-          if (h.prodMin && h.prodMax && h.prodMin > h.prodMax) {
-            // contradiction (e.g. others farmed it): trust the newer one
-            if (farm.max_loot) h.prodMax = h.prodMin;
-            else h.prodMin = h.prodMax;
-          }
-        }
+      // remember reports without any scout info, so they are not fetched again
+      if (scout && !scout.res && !scout.buildings) {
+        h.noScout = (h.noScout || []).concat([scout.reportId]).slice(-5);
+        scout = null;
+      }
+      if (scout && scout.buildings) {
+        h.buildings = Object.assign(h.buildings || {}, scout.buildings);
+        h.scoutReportId = scout.reportId;
       }
 
-      if (!farm.max_loot) h.emptiedAt = farm.report_time;
-      h.lastReport = farm.report_time;
-      h.lastFull = !!farm.max_loot;
-      h.lastCap = capSent || h.lastCap || 0;
-      h.sent = null;
+      let isNewReport = T > 0 && T > (h.lastReport || 0);
+      if (isNewReport) {
+        let m = buildModel(farm, h, worldSpeed);
+        let capSent =
+          h.sent && Math.abs(h.sent.arrival - T) < 900 ? h.sent.capacity : 0;
+        let base = baseOf(h, T, m);
+        let rawAtT = forecastRaw(m, base.raw, (T - base.time) / 3600);
+        if (scout && scout.res) rawAtT = scout.res.slice();
+
+        if (farm.has_loot_info) {
+          if (!m.exact && h.emptiedAt && T > h.emptiedAt && capSent > 0) {
+            let hours = (T - h.emptiedAt) / 3600;
+            if (hours >= 0.25) {
+              let rate = capSent / hours;
+              if (farm.max_loot) h.prodMin = Math.max(h.prodMin || 0, rate);
+              else h.prodMax = Math.min(h.prodMax || Infinity, rate);
+              if (h.prodMin && h.prodMax && h.prodMin > h.prodMax) {
+                if (farm.max_loot) h.prodMax = h.prodMin;
+                else h.prodMin = h.prodMax;
+              }
+            }
+          }
+          if (farm.max_loot) {
+            h.base = { time: T, raw: takeFrom(m, rawAtT, capSent || capacityA) };
+          } else {
+            h.base = { time: T, raw: rawAtT.map((v, i) => Math.min(v, m.hidden[i])) };
+            h.emptiedAt = T;
+          }
+          h.lastFull = !!farm.max_loot;
+          h.lastCap = capSent || h.lastCap || 0;
+        } else if (scout && scout.res) {
+          h.base = { time: T, raw: rawAtT };
+        }
+        h.lastReport = T;
+        h.sent = null;
+      } else if (scout && scout.res && scout.reportId != h.scoutRawId) {
+        // same report seen before, but its scout data was loaded just now
+        let m = buildModel(farm, h, worldSpeed);
+        h.base = {
+          time: T,
+          raw: farm.has_loot_info && !farm.max_loot
+            ? scout.res.map((v, i) => Math.min(v, m.hidden[i]))
+            : farm.has_loot_info
+              ? takeFrom(m, scout.res.slice(), h.lastCap || capacityA)
+              : scout.res.slice(),
+        };
+      }
+      if (scout && scout.res) h.scoutRawId = scout.reportId;
+      if (scout && scout.reportId) h.scoutReportId = scout.reportId;
       history[coord] = h;
     }
 
@@ -1109,18 +1314,21 @@ window.FarmGod.Main = (function (Library, Translation) {
 
   // label for the "last haul" column: full / not full + age of the report
   const lootLabel = function (loot) {
+    let tag = loot && loot.scouted ? ` <span title="${t.table.scoutedTitle}">🔍</span>` : '';
     if (loot && loot.isNew)
-      return `<span style="color:#1a4d8f;">${t.table.lootNew}</span>`;
-    if (!loot || !loot.known) return t.table.lootUnknown;
+      return `<span style="color:#1a4d8f;">${t.table.lootNew}</span>` + tag;
+    if (!loot || !loot.known) return t.table.lootUnknown + tag;
     let label = loot.full ? t.table.lootFull : t.table.lootPartial;
     if (loot.ageMinutes !== null) {
       let h = Math.floor(loot.ageMinutes / 60);
       let m = Math.round(loot.ageMinutes % 60);
       label += ` (${h > 0 ? h + 'h ' : ''}${m}min ${t.table.ago})`;
     }
-    return loot.full
-      ? `<span style="color:#0a7d00;">${label}</span>`
-      : `<span style="color:#8a4b00;">${label}</span>`;
+    return (
+      (loot.full
+        ? `<span style="color:#0a7d00;">${label}</span>`
+        : `<span style="color:#8a4b00;">${label}</span>`) + tag
+    );
   };
 
   const formatTime = function (ts) {
@@ -1442,6 +1650,16 @@ window.FarmGod.Main = (function (Library, Translation) {
               .attr('src')
               .match(/dots\/(green|yellow|red|blue|red_blue)/)[1],
             max_loot: $el.find('img[src*="max_loot/1"]').length > 0,
+            // id of the last report (link in the row) and whether the row
+            // shows resource numbers (=> the report contains scout info)
+            report_id: parseInt(
+              (
+                ($el.find('a[href*="screen=report&mode=all&view="]').first().attr('href') || '').match(/view=(\d+)/) || []
+              )[1]
+            ) || 0,
+            has_res_info:
+              $el.find('.icon.header.wood, .icon.header.stone, .icon.header.iron').length > 0 ||
+              $el.find('img[src*="/wood"], img[src*="holz"]').length > 0,
             // true if the row has a haul icon at all (attack report with loot);
             // scout-only reports have none and count as "unknown"
             has_loot_info: $el.find('img[src*="max_loot/"]').length > 0,
@@ -1509,7 +1727,7 @@ window.FarmGod.Main = (function (Library, Translation) {
           if (data.points.hasOwnProperty(coord))
             data.farms.farms[coord].points = data.points[coord];
         }
-        return data;
+        return fetchNewScoutReports(data.farms.farms).then(() => data);
       });
   };
 
@@ -1519,7 +1737,6 @@ window.FarmGod.Main = (function (Library, Translation) {
 
     const hasLootInfo = (farm) =>
       farm.hasOwnProperty('has_loot_info') && farm.has_loot_info;
-    const knownEmpty = (farm) => hasLootInfo(farm) && !farm.max_loot;
 
     const capacityA = data.farms.templates.a
       ? data.farms.templates.a.capacity || 0
@@ -1528,46 +1745,37 @@ window.FarmGod.Main = (function (Library, Translation) {
     const worldSpeed = worldConfig.speed || 1;
     const tempo = worldSpeed * (worldConfig.unit_speed || 1);
     const minScore = RULES.minScorePerSpeed * tempo;
-    const history = learnFromReports(data.farms.farms, serverTime);
+    const history = learnFromReports(data.farms.farms, serverTime, capacityA, worldSpeed);
     const historyOf = (farm) => history[farm.coord] || {};
+    const modelOf = (farm) => buildModel(farm, historyOf(farm), worldSpeed);
+    const productionOf = (farm) =>
+      modelOf(farm).prod.reduce((a, b) => a + b, 0);
 
-    // Production per hour: points-based estimate (scaled by world speed),
-    // corrected by what we have observed for this village.
-    const productionOf = (farm) => {
-      let prod =
-        (farm.points
-          ? lib.estimateProduction(farm.points)
-          : RULES.defaultProduction) * worldSpeed;
-      let h = historyOf(farm);
-      if (h.prodMin) prod = Math.max(prod, h.prodMin);
-      if (h.prodMax) prod = Math.min(prod, h.prodMax);
-      return prod;
-    };
+    // attacks on the way / planned: arrival + capacity they will take
+    const eventsOf = (coord) =>
+      (data.commands[coord] || []).map((e) => {
+        if (typeof e === 'object') return e;
+        let h = history[coord] || {};
+        let cap =
+          h.sent && Math.abs(h.sent.arrival - e) < 900 ? h.sent.capacity : capacityA;
+        return { ts: e, cap: cap };
+      });
 
-    // Resources we expect to find at arrival (before capping at capacity):
-    //  - last haul not full: village was emptied at the report time, since
-    //    then it only produced
-    //  - last haul full, and we know when it was empty before: what was left
-    //    after that haul plus production since
-    //  - last haul full, never seen empty / no report at all: probably a
-    //    stocked village (untouchedHours of production)
-    const estimateResources = (farm, arrival) => {
-      let prod = productionOf(farm);
-      let sinceReport = farm.report_time
-        ? Math.max(0, (arrival - farm.report_time) / 3600)
-        : 0;
-      let untouched = prod * RULES.untouchedHours;
-
-      if (knownEmpty(farm)) return sinceReport * prod;
-      if (!hasLootInfo(farm)) return untouched;
-
-      let h = historyOf(farm);
-      let takenThen = h.lastCap || capacityA;
-      if (h.emptiedAt && h.emptiedAt < farm.report_time) {
-        let regenerated = ((farm.report_time - h.emptiedAt) / 3600) * prod;
-        return Math.max(0, Math.min(regenerated, untouched) - takenThen) + sinceReport * prod;
-      }
-      return Math.max(0, untouched - takenThen) + sinceReport * prod;
+    // Loot we expect to find at time t: last known state, production since,
+    // minus what earlier attacks (running or planned in this run) take.
+    const lootableAt = (farm, t) => {
+      let m = modelOf(farm);
+      let cur = baseOf(historyOf(farm), t, m);
+      eventsOf(farm.coord)
+        .filter((e) => e.ts > cur.time && e.ts <= t)
+        .sort((a, b) => a.ts - b.ts)
+        .forEach((e) => {
+          let rawAtE = forecastRaw(m, cur.raw, (e.ts - cur.time) / 3600);
+          // stock only estimated (no scout report): assume the earlier attack
+          // empties the village; stock known exactly: subtract its capacity
+          cur = { time: e.ts, raw: takeFrom(m, rawAtE, m.exact ? e.cap : Infinity) };
+        });
+      return lootableOf(m, forecastRaw(m, cur.raw, (t - cur.time) / 3600));
     };
 
     // Picks the template for a farm: B if the village probably holds enough
@@ -1621,16 +1829,7 @@ window.FarmGod.Main = (function (Library, Translation) {
           if (!data.commands.hasOwnProperty(c.coord))
             data.commands[c.coord] = [];
 
-          // Resources at a given arrival time. Attacks already on the way (or
-          // planned in this run) that arrive before ours empty the village;
-          // from then on only its production counts.
-          const resourcesAt = (arrival) => {
-            let earlier = data.commands[c.coord].filter((ts) => ts <= arrival);
-            let emptiedAt = earlier.length ? Math.max(...earlier) : 0;
-            return emptiedAt
-              ? ((arrival - emptiedAt) / 3600) * productionOf(farm)
-              : estimateResources(farm, arrival);
-          };
+          const resourcesAt = (arrival) => lootableAt(farm, arrival);
           const arrivalWith = (speed) =>
             Math.round(
               serverTime + c.dis * speed * 60 + Math.round(plan.counter / 5)
@@ -1708,8 +1907,10 @@ window.FarmGod.Main = (function (Library, Translation) {
           arrival: pick.arrival,
           points: pick.farm.points || 0,
           production: productionOf(pick.farm),
+          scouted: modelOf(pick.farm).exact,
           loot: {
             known: hasLootInfo(pick.farm),
+            scouted: modelOf(pick.farm).exact,
             isNew: !!pick.farm.is_new,
             full: !!pick.farm.max_loot,
             ageMinutes:
@@ -1720,7 +1921,7 @@ window.FarmGod.Main = (function (Library, Translation) {
         });
 
         origin.units = pick.unitsLeft;
-        data.commands[pick.coord].push(pick.arrival);
+        data.commands[pick.coord].push({ ts: pick.arrival, cap: pick.capacity });
       }
     }
 
