@@ -38,7 +38,9 @@ Automatisierung des Sendens, keine Timer, keine Hintergrundschleifen. (Skriptreg
      `{ base:{time,raw:[holz,lehm,eisen]}, buildings, scoutTime, scoutPoints, prodMin, prodMax,
         emptiedAt, lastReport, lastCap, sent:[{arrival,capacity,expected}], troops, noScout }`.
    - Auswertung in localStorage `FarmGodSmart_stats`: Liste `{time, coord, expected, actual, capacity, full}`
-     (max. `RULES.maxStats`), `statsSummary()` → Zeile über der Tabelle.
+     (max. `RULES.maxStats`), `statsSummary()` → Zeile über der Tabelle. `lootTitle` → Tooltip der
+     Beute-Spalte: gespäht + Alter, laufende Angriffe (`entry.running`, Schnappschuss der
+     Befehlsübersicht vor der Planung) und die letzten 3 eigenen Beuten aus `FarmGodSmart_stats`.
    - `parseReportList` + `backfillScoutReports`: der Farm-Assistent zeigt je Dorf nur den letzten Bericht;
      für Dörfer ohne `buildings` wird höchstens alle `RULES.backfillHours` (24 h, Zeitstempel in
      `FarmGodSmart_backfill`) die Berichtsübersicht `screen=report&mode=attack` (bis `backfillPages`
@@ -146,7 +148,8 @@ Der blaue Punkt (`dots/blue.webp`) heißt nur "letzter Bericht ist ein Spähberi
 Offen: Ergebnis nach ein paar Tagen an der Auswertungszeile prüfen ("Ø voll" sollte steigen).
 
 ### 5. Tests – **erledigt**, ausbauen bei Bedarf
-68 Tests in `test/` (Parser, getData, createPlanning, kompletter Ablauf, Backfill, Auswertung,
+70 Tests in `test/` (Parser, getData, createPlanning, kompletter Ablauf, Backfill, Auswertung,
+Beute-Tooltip `tooltip.test.js`,
 Spähzeile ohne Bericht `scoutrow.test.js`, Vorrats-Vertrauen und Berichtszuordnung `overcommit.test.js`,
 Anfragen-Drosselung `requests.test.js`, Sperrseite `blocked.test.js`, Befehlskapazität `commands.test.js`,
 mehrere Herkunftsdörfer in `planning.test.js` – zweites Dorf per `twoVillages()` aus der Übersichtszeile geklont,

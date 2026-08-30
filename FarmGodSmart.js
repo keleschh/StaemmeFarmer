@@ -51,6 +51,10 @@
 //    Angriff von einem anderen Gerät oder von Hand kam: so fallen Dörfer auf, die andere Spieler
 //    mitfarmen (die effektive Produktion sinkt, das Dorf rutscht nach hinten). Nach 3 Tagen ohne
 //    neuen Bericht wird die gelernte Grenze vergessen und das Dorf wieder probiert.
+//  - Tooltip der Beute-Spalte (auch auf der Lupe): gespäht + Alter, Angriffe die schon auf das Dorf
+//    unterwegs sind (mit Ankunftszeit, aus der Befehlsübersicht – also auch von Hand oder vom
+//    anderen Gerät), und die letzten bis zu 3 eigenen Beuteberichte aus der Auswertung (nur dieses
+//    Gerät, weil die Auswertung im localStorage liegt).
 //  - Der Farm-Assistent zeigt je Dorf nur den letzten Bericht. Für Dörfer ohne Gebäudedaten sucht
 //    das Skript einmal am Tag in der Berichtsübersicht (Angriffe, bis 5 Seiten) den letzten
 //    Spähbericht und übernimmt daraus die Gebäude.
@@ -643,6 +647,8 @@ window.FarmGod.Translation = (function () {
         lootNew: 'new (no report yet)',
         back: 'Back at',
         scoutedTitle: 'scouted: production, hiding place and warehouse are known exactly',
+        incoming: 'On the way: %n attack(s), arriving %times',
+        lastHauls: 'Last hauls: %list',
         settings: 'Settings',
         attacks: 'attacks',
         totalLoot: 'expected loot',
@@ -713,6 +719,8 @@ window.FarmGod.Translation = (function () {
         lootNew: 'new (no report yet)',
         back: 'Back at',
         scoutedTitle: 'scouted: production, hiding place and warehouse are known exactly',
+        incoming: 'On the way: %n attack(s), arriving %times',
+        lastHauls: 'Last hauls: %list',
         settings: 'Settings',
         attacks: 'attacks',
         totalLoot: 'expected loot',
@@ -781,6 +789,8 @@ window.FarmGod.Translation = (function () {
         lootNew: 'new (no report yet)',
         back: 'Back at',
         scoutedTitle: 'scouted: production, hiding place and warehouse are known exactly',
+        incoming: 'On the way: %n attack(s), arriving %times',
+        lastHauls: 'Last hauls: %list',
         settings: 'Settings',
         attacks: 'attacks',
         totalLoot: 'expected loot',
@@ -850,6 +860,8 @@ window.FarmGod.Translation = (function () {
         lootNew: 'neu (noch kein Bericht)',
         back: 'Zurück um',
         scoutedTitle: 'gespäht: Produktion, Versteck und Speicher sind exakt bekannt',
+        incoming: 'Unterwegs: %n Angriff(e), Ankunft %times',
+        lastHauls: 'Letzte Beute: %list',
         settings: 'Einstellungen',
         attacks: 'Angriffe',
         totalLoot: 'erwartete Beute',
@@ -1806,17 +1818,19 @@ window.FarmGod.Main = (function (Library, Translation) {
     });
   };
 
-  // label for the "last haul" column: full / not full + age of the report
+  const scoutAge = (loot) =>
+    loot.scoutAgeHours === null
+      ? ''
+      : loot.scoutAgeHours < 48
+        ? ` (${Math.round(loot.scoutAgeHours)}h)`
+        : ` (${Math.round(loot.scoutAgeHours / 24)}d)`;
+
+  // label for the "last haul" column: full / not full + age of the report;
+  // the tooltip of the whole cell comes from lootTitle
   const lootLabel = function (loot) {
     let tag = '';
     if (loot && loot.scouted) {
-      let age =
-        loot.scoutAgeHours === null
-          ? ''
-          : loot.scoutAgeHours < 48
-            ? ` (${Math.round(loot.scoutAgeHours)}h)`
-            : ` (${Math.round(loot.scoutAgeHours / 24)}d)`;
-      tag = ` <span title="${t.table.scoutedTitle}${age}">🔍${age}</span>`;
+      tag = ` <span>🔍${scoutAge(loot)}</span>`;
     }
     if (loot && loot.isNew)
       return `<span style="color:#1a4d8f;">${t.table.lootNew}</span>` + tag;
@@ -1837,6 +1851,32 @@ window.FarmGod.Main = (function (Library, Translation) {
   const formatTime = function (ts) {
     let d = new Date(ts * 1000);
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  };
+
+  // tooltip of the loot cell: scouted?, attacks already on the way, and the
+  // last own hauls of this village from the evaluation (this device only)
+  const lootTitle = function (val, statsByCoord) {
+    let lines = [];
+    if (val.loot && val.loot.scouted) lines.push(t.table.scoutedTitle + scoutAge(val.loot));
+    if (val.running && val.running.length) {
+      lines.push(
+        t.table.incoming
+          .replace('%n', val.running.length)
+          .replace('%times', val.running.slice().sort((a, b) => a - b).map(formatTime).join(', '))
+      );
+    }
+    let hauls = (statsByCoord[val.target.coord] || []).slice(-3).reverse();
+    if (hauls.length) {
+      lines.push(
+        t.table.lastHauls.replace(
+          '%list',
+          hauls
+            .map((s) => `${s.actual}/${s.capacity}${s.full ? ` (${t.table.lootFull})` : ''} ${formatTime(s.time)}`)
+            .join(' · ')
+        )
+      );
+    }
+    return lines.join('\n');
   };
 
   const buildTable = function (plan) {
@@ -1874,6 +1914,9 @@ window.FarmGod.Main = (function (Library, Translation) {
                 <tr><div id="FarmGodProgessbar" class="progress-bar live-progress-bar progress-bar-alive" style="width:98%;margin:5px auto;"><div style="background: rgb(146, 194, 0);"></div><span class="label" style="margin-top:0px;"></span></div></tr>
                 <tr><th style="text-align:center;">${t.table.origin}</th><th style="text-align:center;">${t.table.target}</th><th style="text-align:center;">${t.table.fields}</th><th style="text-align:center;">${t.table.expected}</th><th style="text-align:center;">${t.table.loot}</th><th style="text-align:center;">${t.table.back}</th><th style="text-align:center;">${t.table.farm}</th></tr>`;
 
+    const statsByCoord = {};
+    loadStats().forEach((s) => (statsByCoord[s.coord] = statsByCoord[s.coord] || []).push(s));
+
     if (!$.isEmptyObject(farms)) {
       for (let prop in farms) {
         if (game_data.market == 'nl') {
@@ -1882,6 +1925,7 @@ window.FarmGod.Main = (function (Library, Translation) {
 
         farms[prop].forEach((val, i) => {
           let details = `${val.points ? val.points + ' P' : '?'} · ~${Math.round(val.production)}/h · ${Math.round(val.score)} ${t.table.score}`;
+          let lootTip = lootTitle(val, statsByCoord);
           html += `<tr class="farmRow row_${i % 2 == 0 ? 'a' : 'b'}">
                     <td style="text-align:center;"><a href="${game_data.link_base_pure
             }info_village&id=${val.origin.id}">${val.origin.name} (${val.origin.coord
@@ -1892,7 +1936,7 @@ window.FarmGod.Main = (function (Library, Translation) {
                     <td style="text-align:center;">${val.fields.toFixed(1)}</td>
                     <td style="text-align:center;" title="${details}">~${Math.round(val.expected)} / ${val.capacity
             }${val.fallback ? ` <span style="color:#a00;">(${t.table.fallbackTag})</span>` : ''}${val.probe ? ` <span style="color:#1a4d8f;">(${t.table.probeTag})</span>` : ''}</td>
-                    <td style="text-align:center;">${lootLabel(val.loot)}</td>
+                    <td style="text-align:center;"${lootTip ? ` title="${lootTip}"` : ''}>${lootLabel(val.loot)}</td>
                     <td style="text-align:center;">${formatTime(val.returnTime)}</td>
                     <td style="text-align:center;"><a href="#" data-origin="${val.origin.id
             }" data-target="${val.target.id}" data-template="${val.template.id
@@ -2362,6 +2406,15 @@ window.FarmGod.Main = (function (Library, Translation) {
     const productionOf = (farm) =>
       modelOf(farm).prod.reduce((a, b) => a + b, 0);
 
+    // real attacks already on the way (commands overview), captured before
+    // the planning pushes its own events - shown in the table tooltip
+    const runningBefore = {};
+    Object.keys(data.commands).forEach((coord) => {
+      runningBefore[coord] = (data.commands[coord] || []).map((e) =>
+        typeof e === 'object' ? e.ts : e
+      );
+    });
+
     // attacks on the way / planned: arrival + capacity they will take
     const eventsOf = (coord) =>
       (data.commands[coord] || []).map((e) => {
@@ -2492,6 +2545,7 @@ window.FarmGod.Main = (function (Library, Translation) {
           travel,
           points: farm.points || 0,
           production: productionOf(farm),
+          running: runningBefore[farm.coord] || [],
           scouted: m.exact,
           loot: {
             known: hasLootInfo(farm),
@@ -2848,6 +2902,7 @@ window.FarmGod.Main = (function (Library, Translation) {
       backfillScoutReports,
       loadStats,
       statsSummary,
+      buildTable,
     },
   };
 })(window.FarmGod.Library, window.FarmGod.Translation);
