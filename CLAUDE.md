@@ -52,12 +52,18 @@ Automatisierung des Sendens, keine Timer, keine Hintergrundschleifen. (Skriptreg
      vollen Beute hochgerechnet wurde. Nur bei gespähten Gebäuden **und** Beobachtung ≤ 6 h vor Ankunft
      werden für weitere Angriffe (laufend oder im selben Durchlauf) deren Kapazitäten abgezogen; sonst
      gilt der erste Angriff als "räumt leer" → höchstens ein Angriff je Dorf und Durchlauf.
-     Vorlage B (`bWorthy`: 2a/2b/2c) nur, wenn der Vorrat so bekannt ist **oder** `prodMax` (effektive
-     Produktion aus einer Teilbeute) gelernt wurde; sonst A. Wunsch des Spielers (30.08.2026): lieber viele
-     A auf viele Dörfer als ein B auf eine Hochrechnung. 2b nimmt für ein B notfalls die schwächsten
-     anderen A-Angriffe, wenn der Gewinn ≥ deren Beute.
+     Vorlage B (`bWorthy`: 2a/2b/2c), wenn die Gebäude gespäht sind (`m.exact`, egal wie alt der
+     Spähbericht – die Produktion ist ja per `contestedFactor` gedämpft) **oder** `prodMax` (effektive
+     Produktion aus einer Teilbeute) gelernt wurde; nur aus Punkten hochgerechnete Dörfer bekommen A.
+     2b nimmt für ein B notfalls die schwächsten anderen A-Angriffe, wenn der Gewinn ≥ deren Beute.
      Hintergrund (30.08.2026): 7 Angriffe auf 596|427 aus 13 h hochgerechneter Produktion, das Dorf war
      von anderen leergeräumt. `prodMin`/`prodMax` = 0 ist ein gültiger Wert (`typeof === 'number'`).
+     Lockerung (30.08.2026 nachmittags): `bWorthy` verlangte anfangs Beobachtung ≤ 6 h auch für das
+     *erste* B. Damit bekamen gespähte volle Dörfer außerhalb des A-Radius (A-Score ist auf
+     Tragkraft 160 gedeckelt → auf de259 lohnt A nur bis ~8 Felder) gar keinen Angriff mehr
+     (Fall 600|427: gespäht, ~3000 lootbar, 8,5 Felder, 26 h alt → nichts). Jetzt reicht fürs
+     erste B der gespähte Ausbau; das Stapeln mehrerer Angriffe verlangt weiterhin die frische
+     Beobachtung.
    - `RULES.contestedFactor` (0.6): in der Planung (`modelOf` in `createPlanning`) zählt die aus Minen
      hochgerechnete Produktion nur zu diesem Anteil, solange kein `prodMax` (effektive Produktion aus
      einer Teilbeute) gelernt ist. Kalibrieren an der Auswertungszeile ("Schätzung Ø" → 0 bringen).
@@ -140,7 +146,7 @@ Der blaue Punkt (`dots/blue.webp`) heißt nur "letzter Bericht ist ein Spähberi
 Offen: Ergebnis nach ein paar Tagen an der Auswertungszeile prüfen ("Ø voll" sollte steigen).
 
 ### 5. Tests – **erledigt**, ausbauen bei Bedarf
-64 Tests in `test/` (Parser, getData, createPlanning, kompletter Ablauf, Backfill, Auswertung,
+68 Tests in `test/` (Parser, getData, createPlanning, kompletter Ablauf, Backfill, Auswertung,
 Spähzeile ohne Bericht `scoutrow.test.js`, Vorrats-Vertrauen und Berichtszuordnung `overcommit.test.js`,
 Anfragen-Drosselung `requests.test.js`, Sperrseite `blocked.test.js`, Befehlskapazität `commands.test.js`,
 mehrere Herkunftsdörfer in `planning.test.js` – zweites Dorf per `twoVillages()` aus der Übersichtszeile geklont,

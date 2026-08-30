@@ -30,10 +30,11 @@
 //    gespäht und die letzte Beobachtung (Spähbericht, Zeilen-Hochrechnung, Leerräumen durch
 //    Teilbeute) höchstens 6 Stunden her. Ein nur aus Produktion hochgerechneter Vorrat bekommt
 //    einen Angriff, der als "räumt leer" gilt – so landen nie 7 Angriffe auf einem Dorf, das
-//    inzwischen jemand anderes geplündert hat. Vorlage B gibt es nur für Dörfer, deren Vorrat
-//    so bekannt ist oder deren effektive Produktion schon aus einer Teilbeute gelernt wurde;
-//    alles andere bekommt A – lieber viele kleine Angriffe auf viele Dörfer als ein großer
-//    ins Blaue.
+//    inzwischen jemand anderes geplündert hat. Vorlage B gibt es nur für Dörfer mit gespähten
+//    Gebäuden (Versteck, Speicher und Minen exakt; auch wenn der Spähbericht älter ist – sonst
+//    bekämen gespähte volle Dörfer außerhalb des A-Radius gar nichts) oder mit einer aus einer
+//    Teilbeute gelernten effektiven Produktion; alles andere bekommt A – lieber viele kleine
+//    Angriffe auf viele Dörfer als ein großer ins Blaue.
 //  - Ist der letzte Bericht ein Spähbericht, zeigt die Farm-Assistent-Zeile die vom Spiel
 //    hochgerechneten Rohstoffe; die nimmt das Skript direkt als Vorrat (kein Bericht-Abruf nötig).
 //  - Spähberichte (1 Request pro neuem Bericht, max. 5 pro Durchlauf) liefern Rohstoffe, Gebäude
@@ -939,7 +940,9 @@ window.FarmGod.Main = (function (Library, Translation) {
     // Beobachtung (Spähbericht, Hochrechnung in der Zeile, Leerräumen durch
     // Teilbeute) als bekannt. Danach ist er nur noch hochgerechnete Produktion
     // (andere Spieler könnten geplündert haben): dann höchstens ein Angriff je
-    // Dorf und Durchlauf, der als "räumt das Dorf leer" gilt.
+    // Dorf und Durchlauf, der als "räumt das Dorf leer" gilt. Ob dieser eine
+    // Angriff A oder B ist, hängt nicht hiervon ab, sondern von den gespähten
+    // Gebäuden (siehe bWorthy in createPlanning).
     trustHours: 6,
     // Aus Beuteberichten gelernte Produktionsgrenzen (prodMin/prodMax, z. B.
     // weil andere Spieler dasselbe Dorf farmen) verfallen nach so vielen Tagen
@@ -2449,15 +2452,17 @@ window.FarmGod.Main = (function (Library, Translation) {
     const scoreOf = (entry) =>
       entry.travel > 0 ? entry.expected / ((2 * entry.travel) / 3600) : entry.expected;
     const stockBefore = (entry) => lootableAt(entry.farm, entry.arrival - 1);
-    // Template B only where the stock is really known: observed recently
-    // (scout report, row estimate, emptied by a partial haul) or the
-    // effective production of the village has been learned from a partial
-    // haul. A stock that is only extrapolated from the mines gets a probe
-    // with A - other players farm the same villages, and one A per village
-    // spreads the risk and teaches the effective production.
+    // Template B only where the estimate stands on solid ground: scouted
+    // buildings (hiding place, warehouse and mines are exact, production is
+    // still damped by contestedFactor) or the effective production has been
+    // learned from a partial haul. A stock that is extrapolated from points
+    // alone gets a probe with A - other players farm the same villages, and
+    // one A per village spreads the risk and teaches the effective
+    // production. Stacking several attacks on one village still requires a
+    // fresh observation (trustHours, see lootableAt).
     const bWorthy = (farm, t) => {
       let h = historyOf(farm);
-      return typeof h.prodMax === 'number' || stockKnownAt(h, modelOf(farm), t);
+      return typeof h.prodMax === 'number' || modelOf(farm).exact;
     };
     const entriesOf = (o) => plan.farms[o.prop] || [];
     const plannedTargets = () => {

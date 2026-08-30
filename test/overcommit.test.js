@@ -31,10 +31,11 @@ describe('Hochgerechneter Vorrat: höchstens ein Angriff je Dorf und Durchlauf',
     const on589 = plan.farms['592|424'].filter((r) => r.target.coord == '589|423');
     assert.ok(on589.length <= 1, 'höchstens ein weiterer Angriff');
     on589.forEach((r) => assert.ok(r.expected < 160, 'nur Produktion seit dem laufenden Angriff: ' + r.expected));
-    // 587|430: vor 19 h gespäht, Modell sagt ~2500, aber nichts davon beobachtet -> genau ein A als Probe
+    // 587|430: vor 19 h gespäht, Modell sagt ~2500 -> genau ein Angriff (ein B,
+    // die Gebäude sind exakt bekannt), aber ohne frische Beobachtung kein zweiter
     const on587 = plan.farms['592|424'].filter((r) => r.target.coord == '587|430');
     assert.equal(on587.length, 1);
-    assert.equal(on587[0].template.name, 'a');
+    assert.equal(on587[0].template.name, 'b');
     assert.ok(plan.counter >= 3, 'übrige Truppen gehen woanders hin: ' + plan.counter);
   });
 
@@ -69,6 +70,39 @@ describe('Hochgerechneter Vorrat: höchstens ein Angriff je Dorf und Durchlauf',
     const data = await env2.internals.getData(0, false, false, true, 0);
     const plan = env2.internals.createPlanning({}, data);
     assert.equal(plan.farms['592|424'].filter((r) => r.target.coord == '593|423').length, 1);
+  });
+});
+
+// Fall aus dem Spiel (30.08.2026, 600|427): Dorf gespäht (Gebäude + Vorrat
+// bekannt, 26 h alt), Modell sagt ~3000 lootbar - aber zu weit für ein A
+// (Score-Deckel 160/Tragkraft) und wegen trustHours kein B -> gar kein Angriff.
+// Gespähte Gebäude (exaktes Versteck/Speicher/Minen) sollen für ein einzelnes
+// B reichen, egal wie alt der Spähbericht ist; gestapelt wird weiterhin nur
+// bei frischer Beobachtung.
+describe('Gespähtes Dorf, Beobachtung älter als trustHours: ein B statt A-Probe', () => {
+  test('587|430 (vor 19 h gespäht, Modell voll) bekommt genau ein B', async () => {
+    const env = createEnv({ premium: false, combinedHtml: withTroops(30) });
+    await tick();
+    env.internals.RULES.minScorePerSpeed = 30;
+    const data = await env.internals.getData(0, false, false, true, 0);
+    const plan = env.internals.createPlanning({}, data);
+    const on587 = plan.farms['592|424'].filter((r) => r.target.coord == '587|430');
+    assert.equal(on587.length, 1, 'genau ein Angriff');
+    assert.equal(on587[0].template.name, 'b');
+    assert.ok(on587[0].expected >= 600, 'volles B erwartet: ' + on587[0].expected);
+  });
+
+  test('Dorf ohne gespähte Gebäude bekommt weiterhin kein B', async () => {
+    // 594|423: nur Punkte bekannt, Vorrat reine Hochrechnung -> höchstens A
+    const env = createEnv({ premium: false, combinedHtml: withTroops(30) });
+    await tick();
+    env.internals.RULES.minScorePerSpeed = 30;
+    env.internals.RULES.maxReportFetches = 0; // keine Berichte laden: nichts ist gespäht
+    const data = await env.internals.getData(0, false, false, true, 0);
+    const plan = env.internals.createPlanning({}, data);
+    (plan.farms['592|424'] || [])
+      .filter((r) => r.target.coord == '594|423')
+      .forEach((r) => assert.equal(r.template.name, 'a'));
   });
 });
 

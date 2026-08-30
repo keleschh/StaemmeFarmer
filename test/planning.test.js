@@ -31,8 +31,8 @@ describe('createPlanning mit echten Fixtures', () => {
     const scouted = byCoord['587|430'];
     assert.ok(scouted, 'gespähtes volles Dorf wird angegriffen');
     assert.equal(scouted.loot.scouted, true);
-    // Spähbericht 19 h alt, keine effektive Produktion bekannt -> Probe mit A, kein B
-    assert.equal(scouted.template.name, 'a');
+    // Spähbericht 19 h alt, aber Gebäude exakt bekannt -> ein volles B
+    assert.equal(scouted.template.name, 'b');
 
     rows.forEach((r) => {
       assert.ok(r.travel > 0, 'Laufzeit > 0 für ' + r.target.coord);
@@ -127,7 +127,7 @@ describe('Vorlage B nur bei bekanntem Vorrat oder gelernter Produktion', () => {
     assert.equal(data.commands['594|423'].length, 0, 'Spender-Angriff entfernt');
   });
 
-  test('ohne gelernte Produktion: nur hochgerechnet -> ein A als Probe, kein B', async () => {
+  test('gespähte Gebäude reichen für ein B, ungespähte Dörfer bekommen nur A', async () => {
     const env = createEnv({ premium: false, combinedHtml: withTroops(12) });
     await tick();
     env.internals.RULES.minScorePerSpeed = 30;
@@ -135,8 +135,10 @@ describe('Vorlage B nur bei bekanntem Vorrat oder gelernter Produktion', () => {
     const plan = env.internals.createPlanning({}, data);
     const on587 = plan.farms['592|424'].filter((r) => r.target.coord == '587|430');
     assert.equal(on587.length, 1);
-    assert.equal(on587[0].template.name, 'a');
-    assert.ok(plan.farms['592|424'].every((r) => r.template.name == 'a'), 'nur A-Angriffe');
+    assert.equal(on587[0].template.name, 'b');
+    plan.farms['592|424']
+      .filter((r) => r.target.coord != '587|430')
+      .forEach((r) => assert.equal(r.template.name, 'a', 'nur A auf ' + r.target.coord));
   });
 
   test('bekannter Vorrat (Zeilenzahlen, Gebäude gespäht): mehrere A werden zu B', async () => {
