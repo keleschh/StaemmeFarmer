@@ -27,6 +27,8 @@
 //    gilt das Dorf danach als leer). Die Kapazität laufender Angriffe kommt aus den Einheitenspalten
 //    der Befehlsübersicht – auch für Angriffe von anderen Geräten oder von Hand. Mehrere Angriffe
 //    auf ein Dorf im selben Durchlauf gibt es nur, wenn der Vorrat aus einem Spähbericht bekannt ist.
+//  - Ist der letzte Bericht ein Spähbericht, zeigt die Farm-Assistent-Zeile die vom Spiel
+//    hochgerechneten Rohstoffe; die nimmt das Skript direkt als Vorrat (kein Bericht-Abruf nötig).
 //  - Spähberichte (1 Request pro neuem Bericht, max. 5 pro Durchlauf) liefern Rohstoffe, Gebäude
 //    (Produktion, Versteck, Speicher) und Truppen. Dörfer mit Truppen werden gemieden. Wächst ein
 //    Dorf nach dem Spähen (Punkte steigen), wächst die Produktion im Modell mit.
@@ -1514,6 +1516,15 @@ window.FarmGod.Main = (function (Library, Translation) {
           h.lastCap = capSent || h.lastCap || 0;
         } else if (scout && scout.res) {
           h.base = { time: T, raw: rawAtT };
+        } else if (farm.res_estimate) {
+          // scout report not loaded (budget): the row shows the game's own
+          // extrapolation of that report to now - use it as the stock
+          h.base = { time: serverTime, raw: farm.res_estimate.slice() };
+        } else {
+          // no information about the stock in this report: at least keep
+          // what the attacks that landed meanwhile took (they are dropped
+          // from `sent` below and must not be forgotten)
+          h.base = { time: cur.time, raw: cur.raw.slice() };
         }
         h.lastReport = T;
         h.sent = future;
@@ -2190,6 +2201,19 @@ window.FarmGod.Main = (function (Library, Translation) {
             has_res_info:
               $el.find('.icon.header.wood, .icon.header.stone, .icon.header.iron').length > 0 ||
               $el.find('img[src*="/wood"], img[src*="holz"]').length > 0,
+            // the game's own extrapolation "resources now, from the last scout
+            // report" shown in the row (only when the last report is a scout
+            // report); free of charge, no report request needed
+            res_estimate: (() => {
+              let vals = ['wood', 'stone', 'iron'].map((k) => {
+                let $icon = $el.find(`.icon.header.${k}`).first();
+                if (!$icon.length) return NaN;
+                let $num = $icon.closest('.nowrap').find('.res, .warn').first();
+                let txt = $num.length ? $num.text() : ($icon[0].nextSibling || {}).textContent || '';
+                return parseInt(String(txt).replace(/[^\d]/g, ''));
+              });
+              return vals.every((v) => !isNaN(v)) ? vals : null;
+            })(),
             // true if the row has a haul icon at all (attack report with loot);
             // scout-only reports have none and count as "unknown"
             has_loot_info: $el.find('img[src*="max_loot/"]').length > 0,

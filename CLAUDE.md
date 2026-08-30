@@ -47,6 +47,11 @@ Automatisierung des Sendens, keine Timer, keine Hintergrundschleifen. (Skriptreg
      geht es nach `backfillRetryHours` (1 h) weiter – nicht sofort beim nächsten Start.
    - Rohstoffmodell: `buildModel` (Produktion/Versteck/Speicher je Rohstoff, exakt aus gespähten
      Gebäuden, sonst aus Punkten), `forecastRaw`, `lootableOf`, `takeFrom`, `baseOf`.
+   - Farm-Zeile `res_estimate`: die vom Spiel hochgerechneten Rohstoffe (nur wenn der letzte Bericht
+     ein Spähbericht ist). `learnFromReports` nimmt sie als `base` (Zeit = jetzt), wenn der Spähbericht
+     selbst nicht geladen wurde; gibt es gar keine Vorratsinfo, wird `base` auf den Stand nach den
+     zwischenzeitlich gelandeten `sent`-Angriffen gesetzt. (Fix 30.08.2026: vorher blieb der alte
+     "volle" Stand stehen und ein gerade leer geplündertes Dorf bekam sofort wieder B.)
    - `parseScoutReport`, `parseHaul` (`#attack_results`), `fetchNewScoutReports` (max.
      `RULES.maxReportFetches` Berichte pro Lauf: Spähberichte zuerst, dann eigene Beuteberichte mit
      `sent`-Eintrag), `learnFromReports` (verarbeitet den jeweils letzten Bericht jedes Dorfes genau
