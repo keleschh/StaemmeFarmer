@@ -42,7 +42,8 @@
 //    dazu (1 Request pro Bericht, gemeinsames Budget mit den Spähberichten), wird die tatsächliche
 //    Beute daneben gespeichert; die Tabelle zeigt oben "Auswertung: N Angriffe · Ø x % voll ·
 //    Schätzung Ø +y %". Eine Teilbeute verrät außerdem die exakte Produktion seit dem letzten
-//    Leerräumen und wird so ins Modell übernommen. Das gilt für jede Teilbeute, auch wenn der
+//    Leerräumen und wird so ins Modell übernommen. Bis dahin rechnet die Planung nur mit 60 % der
+//    Minenproduktion, weil andere Spieler meist mitfarmen. Das gilt für jede Teilbeute, auch wenn der
 //    Angriff von einem anderen Gerät oder von Hand kam: so fallen Dörfer auf, die andere Spieler
 //    mitfarmen (die effektive Produktion sinkt, das Dorf rutscht nach hinten). Nach 3 Tagen ohne
 //    neuen Bericht wird die gelernte Grenze vergessen und das Dorf wieder probiert.
@@ -926,6 +927,11 @@ window.FarmGod.Main = (function (Library, Translation) {
     // Die Dorfliste der Welt (village.txt, auf großen Welten mehrere MB) wird
     // so viele Stunden im Browser zwischengespeichert.
     villageListHours: 3,
+    // Andere Spieler farmen dieselben Barbarendörfer. Solange für ein Dorf
+    // keine eigene Teilbeute die effektive Produktion verraten hat, wird die
+    // aus den Minen hochgerechnete Produktion nur zu diesem Anteil angesetzt.
+    // Beobachteter Vorrat (Spähbericht, Zeile) bleibt ungekürzt.
+    contestedFactor: 0.6,
     // Der Vorrat eines Dorfes gilt nur so viele Stunden nach der letzten
     // Beobachtung (Spähbericht, Hochrechnung in der Zeile, Leerräumen durch
     // Teilbeute) als bekannt. Danach ist er nur noch hochgerechnete Produktion
@@ -2337,7 +2343,16 @@ window.FarmGod.Main = (function (Library, Translation) {
     const minScore = RULES.minScorePerSpeed * tempo;
     const history = learnFromReports(data.farms.farms, serverTime, capacityA, worldSpeed);
     const historyOf = (farm) => history[farm.coord] || {};
-    const modelOf = (farm) => buildModel(farm, historyOf(farm), worldSpeed);
+    // planning model: until a partial haul has shown the effective production
+    // of a village, only contestedFactor of the extrapolated production counts
+    const modelOf = (farm) => {
+      let h = historyOf(farm);
+      let m = buildModel(farm, h, worldSpeed);
+      if (typeof h.prodMax !== 'number' && RULES.contestedFactor < 1) {
+        m.prod = m.prod.map((p) => p * RULES.contestedFactor);
+      }
+      return m;
+    };
     const productionOf = (farm) =>
       modelOf(farm).prod.reduce((a, b) => a + b, 0);
 

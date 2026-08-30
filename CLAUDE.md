@@ -55,6 +55,9 @@ Automatisierung des Sendens, keine Timer, keine Hintergrundschleifen. (Skriptreg
      B sein (2b nimmt dafür notfalls die schwächsten anderen A-Angriffe, wenn der Gewinn ≥ deren Beute).
      Hintergrund (30.08.2026): 7 Angriffe auf 596|427 aus 13 h hochgerechneter Produktion, das Dorf war
      von anderen leergeräumt. `prodMin`/`prodMax` = 0 ist ein gültiger Wert (`typeof === 'number'`).
+   - `RULES.contestedFactor` (0.6): in der Planung (`modelOf` in `createPlanning`) zählt die aus Minen
+     hochgerechnete Produktion nur zu diesem Anteil, solange kein `prodMax` (effektive Produktion aus
+     einer Teilbeute) gelernt ist. Kalibrieren an der Auswertungszeile ("Schätzung Ø" → 0 bringen).
    - `learnFromReports` ordnet den Bericht dem `sent`-Eintrag mit der nächsten Ankunft zu (Berichtszeit =
      Ankunft); Einträge mit Ankunft nach dem Bericht bleiben erhalten.
    - Farm-Zeile `res_estimate`: die vom Spiel hochgerechneten Rohstoffe (nur wenn der letzte Bericht

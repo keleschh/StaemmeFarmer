@@ -10,6 +10,7 @@ describe('createPlanning mit echten Fixtures', () => {
     const combinedHtml = fixture('overview_combined.html').replace('<td class="unit-item">10</td>', '<td class="unit-item">30</td>');
     const env = createEnv({ premium: false, combinedHtml });
     await tick();
+    env.internals.RULES.minScorePerSpeed = 30; // kleine Fixture-Dörfer
     const data = await env.internals.getData(0, true, false, true, 500);
     const plan = env.internals.createPlanning({}, data);
     const rows = plan.farms['592|424'] || [];
@@ -51,7 +52,8 @@ describe('createPlanning mit echten Fixtures', () => {
 describe('Kompletter Ablauf: init() -> Tabelle -> Klick', () => {
   test('Tabelle wird gerendert, Klick sendet über den Farm-Assistent-Endpoint und merkt sich den Angriff', async () => {
     const combinedHtml = fixture('overview_combined.html').replace('<td class="unit-item">10</td>', '<td class="unit-item">30</td>');
-    const env = createEnv({ settings: { optionGroup: 0, optionNewbarbsMaxPoints: 500 }, combinedHtml });
+    // 589|423 mit gelernter Produktion, damit es trotz Abschlag geplant wird ("voll (29min her)")
+    const env = createEnv({ settings: { optionGroup: 0, optionNewbarbsMaxPoints: 500 }, combinedHtml, history: { '589|423': { prodMin: 300, prodMax: 300 } } });
     const { $, window } = env;
     // init() ran at load and waits for unit info + world config
     await settle(env);
@@ -106,6 +108,7 @@ describe('Regel 2a: perB-1 A-Angriffe + schwächster anderer Angriff -> ein B', 
   test('12 LKav: 4×A auf das volle gespähte Dorf werden mit dem schwächsten A zu einem B', async () => {
     const env = createEnv({ premium: false, combinedHtml: withTroops(12) });
     await tick();
+    env.internals.RULES.minScorePerSpeed = 30;
     const data = await env.internals.getData(0, true, false, true, 500);
     const plan = env.internals.createPlanning({}, data);
     const rows = plain(plan.farms['592|424'].map((r) => `${r.target.coord}:${r.template.name}`).sort());
@@ -125,9 +128,10 @@ describe('Regel 2a: perB-1 A-Angriffe + schwächster anderer Angriff -> ein B', 
   test('Hochgerechneter Vorrat: ein einzelner A-Angriff wird zu B, statt vier A zu schicken', async () => {
     // 587|430 vor ~6 h gespäht -> bei Ankunft nicht mehr "bekannt": nur ein Angriff, aber der als B
     const rows = ['farm_row_scouted.html', 'farm_row_full_loot.html', 'farm_row_partial_loot.html'].map(fixture).join('\n') +
-      fixture('farm_row_yesterday.html').replace('gestern um 22:33:33', 'heute um 11:30:00');
+      fixture('farm_row_yesterday.html').replace('gestern um 22:33:33', 'heute um 07:00:00');
     const env = createEnv({ premium: false, rows, combinedHtml: withTroops(12) });
     await tick();
+    env.internals.RULES.minScorePerSpeed = 30;
     const data = await env.internals.getData(0, true, false, true, 500);
     const plan = env.internals.createPlanning({}, data);
     const on587 = plan.farms['592|424'].filter((r) => r.target.coord == '587|430');
@@ -152,6 +156,7 @@ describe('Mehrere Herkunftsdörfer: globale Zuweisung', () => {
     // nur 589|423 (voll, 3 Felder von [001], 7.6 von [002]); je 2 LKav
     const env = createEnv({ premium: false, rows: fixture('farm_row_full_loot.html'), combinedHtml: twoVillages(2) });
     await tick();
+    env.internals.RULES.minScorePerSpeed = 30; // kleines Fixture-Dorf, Abschlag auf die Produktion
     const data = await env.internals.getData(0, false, false, true, 0);
     assert.deepEqual(Object.keys(data.villages).sort(), ['592|416', '592|424']);
     const plan = env.internals.createPlanning({}, data);

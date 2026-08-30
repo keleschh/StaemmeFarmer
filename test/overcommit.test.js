@@ -23,6 +23,7 @@ describe('Hochgerechneter Vorrat: höchstens ein Angriff je Dorf und Durchlauf',
     };
     const env = createEnv({ premium: false, history, combinedHtml: withTroops(30) });
     await tick();
+    env.internals.RULES.minScorePerSpeed = 30; // die kleinen Fixture-Dörfer sollen mitspielen
     const data = await env.internals.getData(0, false, false, true, 0);
     const plan = env.internals.createPlanning({}, data);
     // auf 589|423 läuft schon ein Angriff (Befehlsübersicht): der zählt als "räumt leer",
@@ -115,5 +116,30 @@ describe('Bericht dem richtigen Angriff zuordnen, 0 Beute lernen', () => {
     assert.equal(m.prod.reduce((a, b) => a + b, 0), 0);
     const m2 = env.internals.buildModel({ points: 100, coord: '1|1' }, { prodMax: 0 }, 1.6);
     assert.equal(m2.prod.reduce((a, b) => a + b, 0), 0);
+  });
+});
+
+describe('Abschlag auf hochgerechnete Produktion (andere farmen mit)', () => {
+  test('ohne gelernte effektive Produktion zählt nur contestedFactor der Minenproduktion', async () => {
+    // 594|423: leer seit 16:37:49, Minen bekannt (2/2/2 -> 100/h * 1.6 = 160/h)
+    const run = async (extra) => {
+      // 30 LKav, sonst wandern die A-Angriffe als Spender in das B auf 587|430
+      const env = createEnv({ premium: false, combinedHtml: withTroops(30), history: { '594|423': Object.assign({ buildings: exact }, extra) } });
+      await tick();
+      env.internals.RULES.minScorePerSpeed = 30;
+      const data = await env.internals.getData(0, false, false, true, 0);
+      const plan = env.internals.createPlanning({}, data);
+      const row = plan.farms['592|424'].find((r) => r.target.coord == '594|423');
+      return { row, R: env.internals.RULES };
+    };
+    const { row, R } = await run({});
+    assert.ok(row, 'Dorf wird angegriffen');
+    const hours = (row.arrival - ts(16, 37, 49)) / 3600;
+    const full = 160 * hours;
+    assert.ok(Math.abs(row.expected - full * R.contestedFactor) < 3, `erwartet ${row.expected}, voll wären ${full}`);
+
+    // mit gelernter effektiver Produktion (prodMax) kein Abschlag mehr
+    const learned = await run({ prodMin: 100, prodMax: 100 });
+    assert.ok(Math.abs(learned.row.expected - 100 * hours) < 3, 'gelernte Produktion gilt exakt: ' + learned.row.expected);
   });
 });
