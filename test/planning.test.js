@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createEnv, fixture, tick, settle, serverTimeSeconds } from './setup.js';
 
 const plain = (x) => JSON.parse(JSON.stringify(x));
+const ts = (h, m, s) => Math.round(new Date(2026, 7, 29, h, m, s).getTime() / 1000);
 
 describe('createPlanning mit echten Fixtures', () => {
   test('Plan: Angriffe auf bekannte Dörfer, Probe auf neue, Beute-Spalte gefüllt', async () => {
@@ -153,10 +154,12 @@ describe('Mehrere Herkunftsdörfer: globale Zuweisung', () => {
   };
 
   test('das nähere Dorf bekommt das einzige lohnende Ziel, nicht das erste in der Liste', async () => {
-    // nur 589|423 (voll, 3 Felder von [001], 7.6 von [002]); je 2 LKav
-    const env = createEnv({ premium: false, rows: fixture('farm_row_full_loot.html'), combinedHtml: twoVillages(2) });
+    // nur 594|423 (Teilbeute 16:37:49, 2.2 Felder von [001], 7.3 von [002]); je 2 LKav.
+    // Effektive Produktion 55/h bekannt: [001] kommt nach 0,9 h auf ~48 Beute = Score ~100,
+    // [002] nach 1,4 h auf ~77 = Score ~50 < 60 -> nur Fallback
+    const history = { '594|423': { prodMin: 55, prodMax: 55, emptiedAt: ts(16, 37, 49), lastReport: ts(16, 37, 49), base: { time: ts(16, 37, 49), raw: [0, 0, 0], observed: true } } };
+    const env = createEnv({ premium: false, rows: fixture('farm_row_partial_loot.html'), combinedHtml: twoVillages(2), history });
     await tick();
-    env.internals.RULES.minScorePerSpeed = 30; // kleines Fixture-Dorf, Abschlag auf die Produktion
     const data = await env.internals.getData(0, false, false, true, 0);
     assert.deepEqual(Object.keys(data.villages).sort(), ['592|416', '592|424']);
     const plan = env.internals.createPlanning({}, data);
@@ -164,7 +167,7 @@ describe('Mehrere Herkunftsdörfer: globale Zuweisung', () => {
     // (Regel 'best': ein Angriff pro Dorf ohne Ziel), der später ankommt
     const near = plan.farms['592|424'];
     assert.equal(near.length, 1);
-    assert.equal(near[0].target.coord, '589|423');
+    assert.equal(near[0].target.coord, '594|423');
     assert.equal(near[0].fallback, false);
     const far = plan.farms['592|416'] || [];
     assert.ok(far.length <= 1);

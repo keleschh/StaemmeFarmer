@@ -121,7 +121,7 @@ describe('Bericht dem richtigen Angriff zuordnen, 0 Beute lernen', () => {
 
 describe('Abschlag auf hochgerechnete Produktion (andere farmen mit)', () => {
   test('ohne gelernte effektive Produktion zählt nur contestedFactor der Minenproduktion', async () => {
-    // 594|423: leer seit 16:37:49, Minen bekannt (2/2/2 -> 100/h * 1.6 = 160/h)
+    // 594|423: leer seit 16:37:49, Minen bekannt (2/2/2 -> 3*35/h * 1.6 = 168/h)
     const run = async (extra) => {
       // 30 LKav, sonst wandern die A-Angriffe als Spender in das B auf 587|430
       const env = createEnv({ premium: false, combinedHtml: withTroops(30), history: { '594|423': Object.assign({ buildings: exact }, extra) } });
@@ -135,7 +135,7 @@ describe('Abschlag auf hochgerechnete Produktion (andere farmen mit)', () => {
     const { row, R } = await run({});
     assert.ok(row, 'Dorf wird angegriffen');
     const hours = (row.arrival - ts(16, 37, 49)) / 3600;
-    const full = 160 * hours;
+    const full = 168 * hours;
     assert.ok(Math.abs(row.expected - full * R.contestedFactor) < 3, `erwartet ${row.expected}, voll wären ${full}`);
 
     // mit gelernter effektiver Produktion (prodMax) kein Abschlag mehr
