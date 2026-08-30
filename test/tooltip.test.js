@@ -41,20 +41,44 @@ describe('Hover-Popup der Beute-Spalte: laufende Angriffe + letzte Beute', () =>
     assert.ok(text.indexOf('145/160') < text.indexOf('80/160'), 'neueste zuerst');
   });
 
-  test('ohne laufenden Angriff und ohne Auswertung gibt es kein Popup', async () => {
+  test('ohne laufenden Angriff: kein Unterwegs-Teil, der letzte Bericht der Zeile bleibt', async () => {
     const env = createEnv({ premium: false, combinedHtml: withTroops(30) });
     await tick();
     env.internals.RULES.minScorePerSpeed = 30;
     const data = await env.internals.getData(0, false, false, true, 0);
     const plan = env.internals.createPlanning({}, data);
-    // 594|423: kein Befehl unterwegs, keine Auswertungseinträge
+    // 594|423: kein Befehl unterwegs, keine Auswertungseinträge, aber die
+    // Zeile kennt die Teilbeute von 16:37
     const entry = plan.farms['592|424'].find((r) => r.target.coord == '594|423');
     assert.ok(entry, '594|423 wird geplant');
     assert.deepEqual(plain(entry.running), []);
 
     const $rows = env.$('<div>').html(env.internals.buildTable(plan)).find('.farmRow');
     const $row = $rows.filter((i, el) => env.$(el).text().includes('594|423')).first();
-    assert.equal($row.find('td').eq(4).find('.fgTipBox').length, 0);
+    const $box = $row.find('td').eq(4).find('.fgTipBox');
+    assert.equal($box.length, 1);
+    assert.ok(!$box.text().includes('Unterwegs'), 'kein Unterwegs-Teil: ' + $box.text());
+    assert.ok($box.text().includes('nicht voll'), 'Teilbeute aus der Zeile: ' + $box.text());
+  });
+
+  test('letzter Bericht der Zeile erscheint als Beute-Zeile, auch ohne Auswertungs-Eintrag', async () => {
+    // 589|423: volle Beute 16:47 laut Farm-Zeile, aber kein Eintrag in
+    // FarmGodSmart_stats (Angriff von Hand / anderem Gerät, sent-Eintrag ohne
+    // expected via rememberRunningAttacks) - das Popup soll ihn trotzdem zeigen
+    const env = createEnv({
+      premium: false,
+      combinedHtml: withTroops(30),
+      history: { '589|423': { prodMin: 300, prodMax: 300, sent: [{ arrival: ts(16, 47, 3), capacity: 160 }] } },
+    });
+    await tick();
+    env.internals.RULES.minScorePerSpeed = 30;
+    const data = await env.internals.getData(0, false, false, true, 0);
+    const plan = env.internals.createPlanning({}, data);
+    const $rows = env.$('<div>').html(env.internals.buildTable(plan)).find('.farmRow');
+    const $row = $rows.filter((i, el) => env.$(el).text().includes('589|423')).first();
+    const text = $row.find('td').eq(4).find('.fgTipBox').text();
+    assert.ok(text.includes('16:47'), 'Zeit des letzten Berichts: "' + text + '"');
+    assert.ok(text.includes('160/160'), 'volle Beute mit bekannter Kapazität: "' + text + '"');
   });
 
   test('gespähtes Dorf: Popup nennt die Spähzeile mit Alter', async () => {

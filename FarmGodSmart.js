@@ -54,7 +54,10 @@
 //  - Hover-Popup der Beute-Spalte (auch auf der Lupe, gestylter Kasten per CSS): gespäht + Alter,
 //    Angriffe die schon auf das Dorf unterwegs sind (Ankunft + Tragkraft, aus der Befehlsübersicht –
 //    also auch von Hand oder vom anderen Gerät), und die letzten bis zu 3 eigenen Beuteberichte aus
-//    der Auswertung (nur dieses Gerät, weil die Auswertung im localStorage liegt).
+//    der Auswertung (nur dieses Gerät, weil die Auswertung im localStorage liegt). Kennt die
+//    Auswertung den letzten Bericht der Farm-Zeile noch nicht (von Hand, anderes Gerät, Bericht
+//    noch nicht geladen), steht er trotzdem als Beute-Zeile im Popup (voll → Kapazität/Kapazität,
+//    sonst ?/Kapazität).
 //  - Der Farm-Assistent zeigt je Dorf nur den letzten Bericht. Für Dörfer ohne Gebäudedaten sucht
 //    das Skript einmal am Tag in der Berichtsübersicht (Angriffe, bis 5 Seiten) den letzten
 //    Spähbericht und übernimmt daraus die Gebäude.
@@ -1878,14 +1881,30 @@ window.FarmGod.Main = (function (Library, Translation) {
           `</tbody></table>`
       );
     }
-    let hauls = (statsByCoord[val.target.coord] || []).slice(-3).reverse();
+    let hauls = (statsByCoord[val.target.coord] || [])
+      .slice(-3)
+      .reverse()
+      .map((s) => ({ time: s.time, amount: `${s.actual}/${s.capacity}`, full: s.full }));
+    // the farm row itself knows the last report (manual attacks and other
+    // devices included, no report fetch needed): show it when the
+    // evaluation has no entry for it yet
+    if (val.loot && val.loot.known && val.loot.reportTime > (hauls[0] ? hauls[0].time + 60 : 0)) {
+      hauls.unshift({
+        time: val.loot.reportTime,
+        amount: val.loot.lastCap
+          ? `${val.loot.full ? val.loot.lastCap : '?'}/${val.loot.lastCap}`
+          : '',
+        full: val.loot.full,
+      });
+      hauls = hauls.slice(0, 3);
+    }
     if (hauls.length) {
       parts.push(
         `<div class="fgTipHead">🐎 ${t.table.lastHauls}</div><table class="fgTipTable"><tbody>` +
           hauls
             .map(
               (s) =>
-                `<tr><td>${formatTime(s.time)}</td><td style="text-align:right;">${s.actual}/${s.capacity}</td><td>${
+                `<tr><td>${formatTime(s.time)}</td><td style="text-align:right;">${s.amount}</td><td>${
                   s.full
                     ? `<span style="color:#0a7d00;">${t.table.lootFull}</span>`
                     : `<span style="color:#8a4b00;">${t.table.lootPartial}</span>`
@@ -2583,6 +2602,8 @@ window.FarmGod.Main = (function (Library, Translation) {
             isNew: !!farm.is_new,
             full: !!farm.max_loot,
             ageMinutes: farm.report_time > 0 ? Math.max(0, (serverTime - farm.report_time) / 60) : null,
+            reportTime: farm.report_time || 0,
+            lastCap: h.lastCap || 0,
           },
         },
         flags || {}

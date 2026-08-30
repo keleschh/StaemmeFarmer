@@ -41,7 +41,9 @@ Automatisierung des Sendens, keine Timer, keine Hintergrundschleifen. (Skriptreg
      (max. `RULES.maxStats`), `statsSummary()` → Zeile über der Tabelle. `lootTipBox` → Hover-Popup
      der Beute-Spalte (CSS `:hover`, Klassen `fgTipCell`/`fgTipBox`): gespäht + Alter, laufende
      Angriffe (`entry.running` = `{ts, cap}`, Schnappschuss der Befehlsübersicht vor der Planung)
-     und die letzten 3 eigenen Beuten aus `FarmGodSmart_stats`.
+     und die letzten 3 eigenen Beuten aus `FarmGodSmart_stats`; ist der letzte Bericht der Zeile
+     neuer als der neueste Stats-Eintrag (von Hand/anderem Gerät/Bericht nicht geladen), wird er
+     aus `loot.reportTime`/`loot.lastCap`/`loot.full` als Beute-Zeile vorangestellt.
    - `parseReportList` + `backfillScoutReports`: der Farm-Assistent zeigt je Dorf nur den letzten Bericht;
      für Dörfer ohne `buildings` wird höchstens alle `RULES.backfillHours` (24 h, Zeitstempel in
      `FarmGodSmart_backfill`) die Berichtsübersicht `screen=report&mode=attack` (bis `backfillPages`
@@ -149,7 +151,7 @@ Der blaue Punkt (`dots/blue.webp`) heißt nur "letzter Bericht ist ein Spähberi
 Offen: Ergebnis nach ein paar Tagen an der Auswertungszeile prüfen ("Ø voll" sollte steigen).
 
 ### 5. Tests – **erledigt**, ausbauen bei Bedarf
-70 Tests in `test/` (Parser, getData, createPlanning, kompletter Ablauf, Backfill, Auswertung,
+72 Tests in `test/` (Parser, getData, createPlanning, kompletter Ablauf, Backfill, Auswertung,
 Beute-Tooltip `tooltip.test.js`,
 Spähzeile ohne Bericht `scoutrow.test.js`, Vorrats-Vertrauen und Berichtszuordnung `overcommit.test.js`,
 Anfragen-Drosselung `requests.test.js`, Sperrseite `blocked.test.js`, Befehlskapazität `commands.test.js`,
