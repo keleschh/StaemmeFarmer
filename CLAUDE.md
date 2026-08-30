@@ -38,9 +38,10 @@ Automatisierung des Sendens, keine Timer, keine Hintergrundschleifen. (Skriptreg
      `{ base:{time,raw:[holz,lehm,eisen]}, buildings, scoutTime, scoutPoints, prodMin, prodMax,
         emptiedAt, lastReport, lastCap, sent:[{arrival,capacity,expected}], troops, noScout }`.
    - Auswertung in localStorage `FarmGodSmart_stats`: Liste `{time, coord, expected, actual, capacity, full}`
-     (max. `RULES.maxStats`), `statsSummary()` → Zeile über der Tabelle. `lootTitle` → Tooltip der
-     Beute-Spalte: gespäht + Alter, laufende Angriffe (`entry.running`, Schnappschuss der
-     Befehlsübersicht vor der Planung) und die letzten 3 eigenen Beuten aus `FarmGodSmart_stats`.
+     (max. `RULES.maxStats`), `statsSummary()` → Zeile über der Tabelle. `lootTipBox` → Hover-Popup
+     der Beute-Spalte (CSS `:hover`, Klassen `fgTipCell`/`fgTipBox`): gespäht + Alter, laufende
+     Angriffe (`entry.running` = `{ts, cap}`, Schnappschuss der Befehlsübersicht vor der Planung)
+     und die letzten 3 eigenen Beuten aus `FarmGodSmart_stats`.
    - `parseReportList` + `backfillScoutReports`: der Farm-Assistent zeigt je Dorf nur den letzten Bericht;
      für Dörfer ohne `buildings` wird höchstens alle `RULES.backfillHours` (24 h, Zeitstempel in
      `FarmGodSmart_backfill`) die Berichtsübersicht `screen=report&mode=attack` (bis `backfillPages`
