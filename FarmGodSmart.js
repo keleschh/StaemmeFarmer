@@ -30,7 +30,10 @@
 //    gespäht und die letzte Beobachtung (Spähbericht, Zeilen-Hochrechnung, Leerräumen durch
 //    Teilbeute) höchstens 6 Stunden her. Ein nur aus Produktion hochgerechneter Vorrat bekommt
 //    einen Angriff, der als "räumt leer" gilt – so landen nie 7 Angriffe auf einem Dorf, das
-//    inzwischen jemand anderes geplündert hat.
+//    inzwischen jemand anderes geplündert hat. Vorlage B gibt es nur für Dörfer, deren Vorrat
+//    so bekannt ist oder deren effektive Produktion schon aus einer Teilbeute gelernt wurde;
+//    alles andere bekommt A – lieber viele kleine Angriffe auf viele Dörfer als ein großer
+//    ins Blaue.
 //  - Ist der letzte Bericht ein Spähbericht, zeigt die Farm-Assistent-Zeile die vom Spiel
 //    hochgerechneten Rohstoffe; die nimmt das Skript direkt als Vorrat (kein Bericht-Abruf nötig).
 //  - Spähberichte (1 Request pro neuem Bericht, max. 5 pro Durchlauf) liefern Rohstoffe, Gebäude
@@ -2446,6 +2449,16 @@ window.FarmGod.Main = (function (Library, Translation) {
     const scoreOf = (entry) =>
       entry.travel > 0 ? entry.expected / ((2 * entry.travel) / 3600) : entry.expected;
     const stockBefore = (entry) => lootableAt(entry.farm, entry.arrival - 1);
+    // Template B only where the stock is really known: observed recently
+    // (scout report, row estimate, emptied by a partial haul) or the
+    // effective production of the village has been learned from a partial
+    // haul. A stock that is only extrapolated from the mines gets a probe
+    // with A - other players farm the same villages, and one A per village
+    // spreads the risk and teaches the effective production.
+    const bWorthy = (farm, t) => {
+      let h = historyOf(farm);
+      return typeof h.prodMax === 'number' || stockKnownAt(h, modelOf(farm), t);
+    };
     const entriesOf = (o) => plan.farms[o.prop] || [];
     const plannedTargets = () => {
       let planned = {};
@@ -2595,13 +2608,15 @@ window.FarmGod.Main = (function (Library, Translation) {
               if (entry.template.name != 'a' || entry.farm.is_new) return;
               (groups[entry.target.coord] = groups[entry.target.coord] || []).push(entry);
             });
-            let group = Object.values(groups).find((g) => g.length >= perB);
+            let group = Object.values(groups).find(
+              (g) => g.length >= perB && bWorthy(g[0].farm, g[0].arrival)
+            );
             let donor = null;
             if (!group && perB > 2) {
               // one A short of a B: take the troops from the weakest other A
               // attack if the bigger haul more than makes up for it
               let short = Object.values(groups)
-                .filter((g) => g.length == perB - 1)
+                .filter((g) => g.length == perB - 1 && bWorthy(g[0].farm, g[0].arrival))
                 .map((g) => ({ g, stock: stockBefore(g[0]) }))
                 .filter((x) => x.stock >= templateB.capacity * RULES.bFillRatio)
                 .sort((x, y) => y.stock - x.stock)[0];
@@ -2636,7 +2651,7 @@ window.FarmGod.Main = (function (Library, Translation) {
           // theirs - as long as the bigger haul makes up for what they lose.
           while (true) {
             let upgradeable = entries()
-              .filter((entry) => entry.template.name == 'a' && !entry.farm.is_new)
+              .filter((entry) => entry.template.name == 'a' && !entry.farm.is_new && bWorthy(entry.farm, entry.arrival))
               .map((entry) => ({ entry, stock: stockBefore(entry) }))
               .filter((x) => x.stock >= templateB.capacity * RULES.bFillRatio)
               .sort((x, y) => y.stock - x.stock);
@@ -2683,6 +2698,7 @@ window.FarmGod.Main = (function (Library, Translation) {
             if (farm.is_new || planned[c.coord]) return;
             let travel = Math.round(c.dis * templateB.speed * 60);
             let arrival = serverTime + travel + Math.round(plan.counter / 5);
+            if (!bWorthy(farm, arrival)) return;
             let stock = lootableAt(farm, arrival);
             if (stock < templateB.capacity * RULES.bFillRatio) return;
             let expected = Math.min(stock, templateB.capacity);

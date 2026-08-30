@@ -31,7 +31,8 @@ describe('createPlanning mit echten Fixtures', () => {
     const scouted = byCoord['587|430'];
     assert.ok(scouted, 'gespähtes volles Dorf wird angegriffen');
     assert.equal(scouted.loot.scouted, true);
-    assert.equal(scouted.template.name, 'b');
+    // Spähbericht 19 h alt, keine effektive Produktion bekannt -> Probe mit A, kein B
+    assert.equal(scouted.template.name, 'a');
 
     rows.forEach((r) => {
       assert.ok(r.travel > 0, 'Laufzeit > 0 für ' + r.target.coord);
@@ -76,8 +77,9 @@ describe('Kompletter Ablauf: init() -> Tabelle -> Klick', () => {
 
     const history = JSON.parse(window.localStorage.getItem('FarmGodSmart_history'));
     assert.ok(history[coord], 'sent-Eintrag im Gedächtnis');
-    assert.equal(history[coord].sent.length, 1);
-    assert.equal(history[coord].sent[0].capacity, parseInt($first.data('capacity')));
+    const mine = history[coord].sent.filter((x) => typeof x.expected === 'number');
+    assert.equal(mine.length, 1, 'genau ein eigener Eintrag (laufende Angriffe haben kein expected)');
+    assert.equal(mine[0].capacity, parseInt($first.data('capacity')));
   });
 
   test('Enter sendet den ersten Angriff, Enter im Eingabefeld nicht', async () => {
@@ -103,42 +105,50 @@ describe('Kompletter Ablauf: init() -> Tabelle -> Klick', () => {
   });
 });
 
-describe('Regel 2a: perB-1 A-Angriffe + schwächster anderer Angriff -> ein B', () => {
+describe('Vorlage B nur bei bekanntem Vorrat oder gelernter Produktion', () => {
   const withTroops = (lk) => fixture('overview_combined.html').replace('<td class="unit-item">10</td>', `<td class="unit-item">${lk}</td>`);
 
-  test('12 LKav: 4×A auf das volle gespähte Dorf werden mit dem schwächsten A zu einem B', async () => {
-    const env = createEnv({ premium: false, combinedHtml: withTroops(12) });
+  test('perB-1 A-Angriffe + schwächster anderer Angriff -> ein B, wenn die effektive Produktion bekannt ist', async () => {
+    // 587|430: Gebäude bekannt, effektive Produktion 60/h aus einer Teilbeute gelernt, Zeile zeigt
+    // 163/850/163 (beobachtet) -> Vorrat ~726: 4×A (640) + der 5. A geht nach 594|423 ->
+    // Spender-Regel macht ein B (726) daraus. (Bericht nicht laden: frische Spähdaten würden
+    // die gelernte Produktion ersetzen.)
+    const exact = { main: 1, place: 1, wood: 2, stone: 1, iron: 1, farm: 2, storage: 1, hide: 1 };
+    const env = createEnv({ premium: false, combinedHtml: withTroops(10), history: { '587|430': { prodMin: 60, prodMax: 60, buildings: exact } } });
     await tick();
     env.internals.RULES.minScorePerSpeed = 30;
+    env.internals.RULES.maxReportFetches = 0;
     const data = await env.internals.getData(0, true, false, true, 500);
     const plan = env.internals.createPlanning({}, data);
     const rows = plain(plan.farms['592|424'].map((r) => `${r.target.coord}:${r.template.name}`).sort());
-    // vorher: 594|423:a (65), 589|423:a (72), 4× 587|430:a (640) = 777
-    // nachher: 589|423:a (72) + 587|430:b (800) = 872, ein Klick weniger
-    assert.deepEqual(rows, ['587|430:b', '589|423:a']);
-    assert.equal(plan.counter, 2);
-    const b = plan.farms['592|424'].find((r) => r.template.name == 'b');
-    assert.equal(b.template.id, 1126);
-    assert.equal(b.capacity, 800);
-    assert.equal(Math.round(b.expected), 800);
-    // alle 12 LKav verplant, keine doppelten Kommandos übrig
-    assert.equal(data.commands['587|430'].length, 1);
-    assert.equal(data.commands['594|423'].length, 0);
+    assert.deepEqual(rows, ['587|430:b']);
+    const b = plan.farms['592|424'][0];
+    assert.ok(b.expected > 700 && b.expected <= 800, 'B mit dem gelernten Vorrat: ' + b.expected);
+    assert.equal(data.commands['594|423'].length, 0, 'Spender-Angriff entfernt');
   });
 
-  test('Hochgerechneter Vorrat: ein einzelner A-Angriff wird zu B, statt vier A zu schicken', async () => {
-    // 587|430 vor ~6 h gespäht -> bei Ankunft nicht mehr "bekannt": nur ein Angriff, aber der als B
-    const rows = ['farm_row_scouted.html', 'farm_row_full_loot.html', 'farm_row_partial_loot.html'].map(fixture).join('\n') +
-      fixture('farm_row_yesterday.html').replace('gestern um 22:33:33', 'heute um 07:00:00');
-    const env = createEnv({ premium: false, rows, combinedHtml: withTroops(12) });
+  test('ohne gelernte Produktion: nur hochgerechnet -> ein A als Probe, kein B', async () => {
+    const env = createEnv({ premium: false, combinedHtml: withTroops(12) });
     await tick();
     env.internals.RULES.minScorePerSpeed = 30;
     const data = await env.internals.getData(0, true, false, true, 500);
     const plan = env.internals.createPlanning({}, data);
     const on587 = plan.farms['592|424'].filter((r) => r.target.coord == '587|430');
     assert.equal(on587.length, 1);
-    assert.equal(on587[0].template.name, 'b');
-    assert.ok(on587[0].expected > 600 && on587[0].expected < 800, 'B mit dem geschätzten Vorrat: ' + on587[0].expected);
+    assert.equal(on587[0].template.name, 'a');
+    assert.ok(plan.farms['592|424'].every((r) => r.template.name == 'a'), 'nur A-Angriffe');
+  });
+
+  test('bekannter Vorrat (Zeilenzahlen, Gebäude gespäht): mehrere A werden zu B', async () => {
+    const rows = fixture('farm_row_scouted.html').replace(/<span class="res">\d+<\/span>/g, '<span class="res">900</span>');
+    const exact = { main: 1, place: 1, wood: 2, stone: 1, iron: 1, farm: 2, storage: 1, hide: 1 };
+    const env = createEnv({ premium: false, rows, combinedHtml: withTroops(12), history: { '593|423': { buildings: exact } } });
+    await tick();
+    env.internals.RULES.maxReportFetches = 0;
+    const data = await env.internals.getData(0, false, false, true, 0);
+    const plan = env.internals.createPlanning({}, data);
+    const on593 = plan.farms['592|424'].filter((r) => r.target.coord == '593|423');
+    assert.ok(on593.some((r) => r.template.name == 'b'), 'ein B dabei: ' + JSON.stringify(plain(on593.map((r) => r.template.name))));
   });
 });
 

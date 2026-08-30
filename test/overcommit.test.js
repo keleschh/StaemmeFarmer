@@ -31,10 +31,10 @@ describe('Hochgerechneter Vorrat: höchstens ein Angriff je Dorf und Durchlauf',
     const on589 = plan.farms['592|424'].filter((r) => r.target.coord == '589|423');
     assert.ok(on589.length <= 1, 'höchstens ein weiterer Angriff');
     on589.forEach((r) => assert.ok(r.expected < 160, 'nur Produktion seit dem laufenden Angriff: ' + r.expected));
-    // 587|430: vor 19 h gespäht, Modell sagt ~2500 -> genau ein Angriff, als B
+    // 587|430: vor 19 h gespäht, Modell sagt ~2500, aber nichts davon beobachtet -> genau ein A als Probe
     const on587 = plan.farms['592|424'].filter((r) => r.target.coord == '587|430');
     assert.equal(on587.length, 1);
-    assert.equal(on587[0].template.name, 'b');
+    assert.equal(on587[0].template.name, 'a');
     assert.ok(plan.counter >= 3, 'übrige Truppen gehen woanders hin: ' + plan.counter);
   });
 

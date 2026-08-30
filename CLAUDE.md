@@ -51,8 +51,11 @@ Automatisierung des Sendens, keine Timer, keine Hintergrundschleifen. (Skriptreg
      Stand beobachtet (Spähbericht, Zeilen-Hochrechnung, Leerräumen durch Teilbeute) oder nur aus einer
      vollen Beute hochgerechnet wurde. Nur bei gespähten Gebäuden **und** Beobachtung ≤ 6 h vor Ankunft
      werden für weitere Angriffe (laufend oder im selben Durchlauf) deren Kapazitäten abgezogen; sonst
-     gilt der erste Angriff als "räumt leer" → höchstens ein Angriff je Dorf und Durchlauf, aber der darf
-     B sein (2b nimmt dafür notfalls die schwächsten anderen A-Angriffe, wenn der Gewinn ≥ deren Beute).
+     gilt der erste Angriff als "räumt leer" → höchstens ein Angriff je Dorf und Durchlauf.
+     Vorlage B (`bWorthy`: 2a/2b/2c) nur, wenn der Vorrat so bekannt ist **oder** `prodMax` (effektive
+     Produktion aus einer Teilbeute) gelernt wurde; sonst A. Wunsch des Spielers (30.08.2026): lieber viele
+     A auf viele Dörfer als ein B auf eine Hochrechnung. 2b nimmt für ein B notfalls die schwächsten
+     anderen A-Angriffe, wenn der Gewinn ≥ deren Beute.
      Hintergrund (30.08.2026): 7 Angriffe auf 596|427 aus 13 h hochgerechneter Produktion, das Dorf war
      von anderen leergeräumt. `prodMin`/`prodMax` = 0 ist ein gültiger Wert (`typeof === 'number'`).
    - `RULES.contestedFactor` (0.6): in der Planung (`modelOf` in `createPlanning`) zählt die aus Minen
