@@ -47,6 +47,16 @@ Automatisierung des Sendens, keine Timer, keine Hintergrundschleifen. (Skriptreg
      geht es nach `backfillRetryHours` (1 h) weiter – nicht sofort beim nächsten Start.
    - Rohstoffmodell: `buildModel` (Produktion/Versteck/Speicher je Rohstoff, exakt aus gespähten
      Gebäuden, sonst aus Punkten), `forecastRaw`, `lootableOf`, `takeFrom`, `baseOf`.
+   - Vertrauen in den Vorrat (`stockKnownAt`, `RULES.trustHours` = 6): `base.observed` markiert, ob der
+     Stand beobachtet (Spähbericht, Zeilen-Hochrechnung, Leerräumen durch Teilbeute) oder nur aus einer
+     vollen Beute hochgerechnet wurde. Nur bei gespähten Gebäuden **und** Beobachtung ≤ 6 h vor Ankunft
+     werden für weitere Angriffe (laufend oder im selben Durchlauf) deren Kapazitäten abgezogen; sonst
+     gilt der erste Angriff als "räumt leer" → höchstens ein Angriff je Dorf und Durchlauf, aber der darf
+     B sein (2b nimmt dafür notfalls die schwächsten anderen A-Angriffe, wenn der Gewinn ≥ deren Beute).
+     Hintergrund (30.08.2026): 7 Angriffe auf 596|427 aus 13 h hochgerechneter Produktion, das Dorf war
+     von anderen leergeräumt. `prodMin`/`prodMax` = 0 ist ein gültiger Wert (`typeof === 'number'`).
+   - `learnFromReports` ordnet den Bericht dem `sent`-Eintrag mit der nächsten Ankunft zu (Berichtszeit =
+     Ankunft); Einträge mit Ankunft nach dem Bericht bleiben erhalten.
    - Farm-Zeile `res_estimate`: die vom Spiel hochgerechneten Rohstoffe (nur wenn der letzte Bericht
      ein Spähbericht ist). `learnFromReports` nimmt sie als `base` (Zeit = jetzt), wenn der Spähbericht
      selbst nicht geladen wurde; gibt es gar keine Vorratsinfo, wird `base` auf den Stand nach den
@@ -124,7 +134,8 @@ Der blaue Punkt (`dots/blue.webp`) heißt nur "letzter Bericht ist ein Spähberi
 Offen: Ergebnis nach ein paar Tagen an der Auswertungszeile prüfen ("Ø voll" sollte steigen).
 
 ### 5. Tests – **erledigt**, ausbauen bei Bedarf
-55 Tests in `test/` (Parser, getData, createPlanning, kompletter Ablauf, Backfill, Auswertung,
+64 Tests in `test/` (Parser, getData, createPlanning, kompletter Ablauf, Backfill, Auswertung,
+Spähzeile ohne Bericht `scoutrow.test.js`, Vorrats-Vertrauen und Berichtszuordnung `overcommit.test.js`,
 Anfragen-Drosselung `requests.test.js`, Sperrseite `blocked.test.js`, Befehlskapazität `commands.test.js`,
 mehrere Herkunftsdörfer in `planning.test.js` – zweites Dorf per `twoVillages()` aus der Übersichtszeile geklont,
 mitgefarmte Dörfer `contested.test.js`). `setup.js` setzt `twLib.delayMs`/`retryDelaysMs` auf 0. Beim Erweitern beachten:

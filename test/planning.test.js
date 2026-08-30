@@ -6,7 +6,9 @@ const plain = (x) => JSON.parse(JSON.stringify(x));
 
 describe('createPlanning mit echten Fixtures', () => {
   test('Plan: Angriffe auf bekannte Dörfer, Probe auf neue, Beute-Spalte gefüllt', async () => {
-    const env = createEnv({ premium: false });
+    // 30 LKav, damit neben dem vollen gespähten Dorf (587|430 -> B) auch die kleinen dran sind
+    const combinedHtml = fixture('overview_combined.html').replace('<td class="unit-item">10</td>', '<td class="unit-item">30</td>');
+    const env = createEnv({ premium: false, combinedHtml });
     await tick();
     const data = await env.internals.getData(0, true, false, true, 500);
     const plan = env.internals.createPlanning({}, data);
@@ -14,8 +16,6 @@ describe('createPlanning mit echten Fixtures', () => {
 
     assert.ok(plan.counter > 0, 'es werden Angriffe geplant');
     assert.equal(rows.length, plan.counter);
-    // 10 LKav zu Hause, A = 2 LKav -> höchstens 5 Angriffe
-    assert.ok(plan.counter <= 5, 'nicht mehr Angriffe als Truppen: ' + plan.counter);
 
     const byCoord = Object.fromEntries(rows.map((r) => [r.target.coord, r]));
     const full = byCoord['589|423'];
@@ -26,11 +26,10 @@ describe('createPlanning mit echten Fixtures', () => {
     assert.equal(Math.round(full.loot.ageMinutes), 29);
     assert.equal(full.loot.isNew, false);
 
-    const scouted = byCoord['593|423'];
-    if (scouted) {
-      assert.equal(scouted.loot.scouted, true);
-      assert.equal(scouted.scouted, true);
-    }
+    const scouted = byCoord['587|430'];
+    assert.ok(scouted, 'gespähtes volles Dorf wird angegriffen');
+    assert.equal(scouted.loot.scouted, true);
+    assert.equal(scouted.template.name, 'b');
 
     rows.forEach((r) => {
       assert.ok(r.travel > 0, 'Laufzeit > 0 für ' + r.target.coord);
@@ -51,7 +50,8 @@ describe('createPlanning mit echten Fixtures', () => {
 
 describe('Kompletter Ablauf: init() -> Tabelle -> Klick', () => {
   test('Tabelle wird gerendert, Klick sendet über den Farm-Assistent-Endpoint und merkt sich den Angriff', async () => {
-    const env = createEnv({ settings: { optionGroup: 0, optionNewbarbsMaxPoints: 500 } });
+    const combinedHtml = fixture('overview_combined.html').replace('<td class="unit-item">10</td>', '<td class="unit-item">30</td>');
+    const env = createEnv({ settings: { optionGroup: 0, optionNewbarbsMaxPoints: 500 }, combinedHtml });
     const { $, window } = env;
     // init() ran at load and waits for unit info + world config
     await settle(env);
@@ -122,18 +122,18 @@ describe('Regel 2a: perB-1 A-Angriffe + schwächster anderer Angriff -> ein B', 
     assert.equal(data.commands['594|423'].length, 0);
   });
 
-  test('Kein Zusammenlegen, wenn der Gewinn kleiner als der weggefallene Angriff wäre', async () => {
-    // Spähbericht des entfernten Dorfes jünger -> Vorrat bei Ankunft nur ~700:
-    // B brächte 60 mehr als 4×A, der schwächste andere Angriff bringt 65
+  test('Hochgerechneter Vorrat: ein einzelner A-Angriff wird zu B, statt vier A zu schicken', async () => {
+    // 587|430 vor ~6 h gespäht -> bei Ankunft nicht mehr "bekannt": nur ein Angriff, aber der als B
     const rows = ['farm_row_scouted.html', 'farm_row_full_loot.html', 'farm_row_partial_loot.html'].map(fixture).join('\n') +
       fixture('farm_row_yesterday.html').replace('gestern um 22:33:33', 'heute um 11:30:00');
     const env = createEnv({ premium: false, rows, combinedHtml: withTroops(12) });
     await tick();
     const data = await env.internals.getData(0, true, false, true, 500);
     const plan = env.internals.createPlanning({}, data);
-    const rowsOut = plain(plan.farms['592|424'].map((r) => `${r.target.coord}:${r.template.name}`).sort());
-    assert.deepEqual(rowsOut, ['587|430:a', '587|430:a', '587|430:a', '587|430:a', '589|423:a', '594|423:a']);
-    assert.equal(plan.counter, 6);
+    const on587 = plan.farms['592|424'].filter((r) => r.target.coord == '587|430');
+    assert.equal(on587.length, 1);
+    assert.equal(on587[0].template.name, 'b');
+    assert.ok(on587[0].expected > 600 && on587[0].expected < 800, 'B mit dem geschätzten Vorrat: ' + on587[0].expected);
   });
 });
 

@@ -26,7 +26,11 @@
 //  - Laufende und gerade geplante Angriffe werden vom Vorrat abgezogen (bei nur geschätztem Vorrat
 //    gilt das Dorf danach als leer). Die Kapazität laufender Angriffe kommt aus den Einheitenspalten
 //    der Befehlsübersicht – auch für Angriffe von anderen Geräten oder von Hand. Mehrere Angriffe
-//    auf ein Dorf im selben Durchlauf gibt es nur, wenn der Vorrat aus einem Spähbericht bekannt ist.
+//    auf ein Dorf im selben Durchlauf gibt es nur, wenn der Vorrat wirklich bekannt ist: Gebäude
+//    gespäht und die letzte Beobachtung (Spähbericht, Zeilen-Hochrechnung, Leerräumen durch
+//    Teilbeute) höchstens 6 Stunden her. Ein nur aus Produktion hochgerechneter Vorrat bekommt
+//    einen Angriff, der als "räumt leer" gilt – so landen nie 7 Angriffe auf einem Dorf, das
+//    inzwischen jemand anderes geplündert hat.
 //  - Ist der letzte Bericht ein Spähbericht, zeigt die Farm-Assistent-Zeile die vom Spiel
 //    hochgerechneten Rohstoffe; die nimmt das Skript direkt als Vorrat (kein Bericht-Abruf nötig).
 //  - Spähberichte (1 Request pro neuem Bericht, max. 5 pro Durchlauf) liefern Rohstoffe, Gebäude
@@ -922,6 +926,12 @@ window.FarmGod.Main = (function (Library, Translation) {
     // Die Dorfliste der Welt (village.txt, auf großen Welten mehrere MB) wird
     // so viele Stunden im Browser zwischengespeichert.
     villageListHours: 3,
+    // Der Vorrat eines Dorfes gilt nur so viele Stunden nach der letzten
+    // Beobachtung (Spähbericht, Hochrechnung in der Zeile, Leerräumen durch
+    // Teilbeute) als bekannt. Danach ist er nur noch hochgerechnete Produktion
+    // (andere Spieler könnten geplündert haben): dann höchstens ein Angriff je
+    // Dorf und Durchlauf, der als "räumt das Dorf leer" gilt.
+    trustHours: 6,
     // Aus Beuteberichten gelernte Produktionsgrenzen (prodMin/prodMax, z. B.
     // weil andere Spieler dasselbe Dorf farmen) verfallen nach so vielen Tagen
     // ohne neuen Bericht; das Dorf bekommt dann wieder eine Probe.
@@ -1032,8 +1042,8 @@ window.FarmGod.Main = (function (Library, Translation) {
       (farm.points
         ? lib.estimateProduction(farm.points)
         : RULES.defaultProduction) * worldSpeed;
-    if (h.prodMin) prod = Math.max(prod, h.prodMin);
-    if (h.prodMax) prod = Math.min(prod, h.prodMax);
+    if (typeof h.prodMin === 'number') prod = Math.max(prod, h.prodMin);
+    if (typeof h.prodMax === 'number') prod = Math.min(prod, h.prodMax);
     return prod;
   };
 
@@ -1058,8 +1068,8 @@ window.FarmGod.Main = (function (Library, Translation) {
       // own hauls since the scout report can still correct the total
       let total = prod.reduce((a, c) => a + c, 0) || 1;
       let corrected = total;
-      if (h.prodMin) corrected = Math.max(corrected, h.prodMin);
-      if (h.prodMax) corrected = Math.min(corrected, h.prodMax);
+      if (typeof h.prodMin === 'number') corrected = Math.max(corrected, h.prodMin);
+      if (typeof h.prodMax === 'number') corrected = Math.min(corrected, h.prodMax);
       if (corrected !== total) prod = prod.map((p) => (p * corrected) / total);
 
       return {
@@ -1100,6 +1110,13 @@ window.FarmGod.Main = (function (Library, Translation) {
       return { time: h.emptiedAt, raw: m.hidden.slice() };
     return { time: t - RULES.untouchedHours * 3600, raw: [0, 0, 0] };
   };
+
+  // when was the stock last observed (not just extrapolated)?
+  const lastObservedAt = (h) =>
+    Math.max(h.base && h.base.observed ? h.base.time : 0, h.emptiedAt || 0);
+  // stock at time t counts as known: exact buildings and a recent observation
+  const stockKnownAt = (h, m, t) =>
+    m.exact && lastObservedAt(h) > 0 && t - lastObservedAt(h) <= RULES.trustHours * 3600;
 
   /**** Spähberichte ****/
   // reads resources and building levels from a report page
@@ -1442,15 +1459,20 @@ window.FarmGod.Main = (function (Library, Translation) {
 
         // own attacks that landed up to this report: the last one is the
         // attack this report belongs to, earlier ones took their share before
+        // (the report time is the arrival of the attack it belongs to; own =
+        // the entry with the closest arrival; attacks arriving after the
+        // report are still on their way and keep their entry)
         let sentList = sentListOf(h);
         let landed = sentList
-          .filter((x) => x.arrival <= T + 900)
+          .filter((x) => x.arrival <= T + 60)
           .sort((a, b) => a.arrival - b.arrival);
-        let future = sentList.filter((x) => x.arrival > T + 900);
-        let own =
-          landed.length && Math.abs(landed[landed.length - 1].arrival - T) < 900
-            ? landed.pop()
-            : null;
+        let future = sentList.filter((x) => x.arrival > T + 60);
+        let own = null;
+        landed.forEach((x) => {
+          if (Math.abs(x.arrival - T) < 900 && (!own || Math.abs(x.arrival - T) < Math.abs(own.arrival - T)))
+            own = x;
+        });
+        if (own) landed.splice(landed.indexOf(own), 1);
         let haul = farm.has_loot_info && farm.haul ? farm.haul : null;
         let capSent = own ? own.capacity : haul ? haul.capacity : 0;
 
@@ -1507,24 +1529,25 @@ window.FarmGod.Main = (function (Library, Translation) {
               raw: scout && scout.res
                 ? rawAtT
                 : takeFrom(m, rawAtT, haul ? haul.carried : capSent || capacityA),
+              observed: !!(scout && scout.res),
             };
           } else {
-            h.base = { time: T, raw: rawAtT.map((v, i) => Math.min(v, m.hidden[i])) };
+            h.base = { time: T, raw: rawAtT.map((v, i) => Math.min(v, m.hidden[i])), observed: true };
             h.emptiedAt = T;
           }
           h.lastFull = !!farm.max_loot;
           h.lastCap = capSent || h.lastCap || 0;
         } else if (scout && scout.res) {
-          h.base = { time: T, raw: rawAtT };
+          h.base = { time: T, raw: rawAtT, observed: true };
         } else if (farm.res_estimate) {
           // scout report not loaded (budget): the row shows the game's own
           // extrapolation of that report to now - use it as the stock
-          h.base = { time: serverTime, raw: farm.res_estimate.slice() };
+          h.base = { time: serverTime, raw: farm.res_estimate.slice(), observed: true };
         } else {
           // no information about the stock in this report: at least keep
           // what the attacks that landed meanwhile took (they are dropped
           // from `sent` below and must not be forgotten)
-          h.base = { time: cur.time, raw: cur.raw.slice() };
+          h.base = { time: cur.time, raw: cur.raw.slice(), observed: false };
         }
         h.lastReport = T;
         h.sent = future;
@@ -1536,6 +1559,7 @@ window.FarmGod.Main = (function (Library, Translation) {
           raw: farm.has_loot_info && !farm.max_loot
             ? scout.res.map((v, i) => Math.min(v, m.hidden[i]))
             : scout.res.slice(),
+          observed: true,
         };
       }
       if (scout && scout.res) h.scoutRawId = scout.reportId;
@@ -1548,7 +1572,10 @@ window.FarmGod.Main = (function (Library, Translation) {
       // a learned production limit (often: "others farm here too") is
       // forgotten after a while without a new report, so the village gets a
       // new probe once the others may have stopped
-      if ((h.prodMin || h.prodMax) && (h.lastReport || 0) < serverTime - RULES.learnedRateDays * 86400) {
+      if (
+        (typeof h.prodMin === 'number' || typeof h.prodMax === 'number') &&
+        (h.lastReport || 0) < serverTime - RULES.learnedRateDays * 86400
+      ) {
         delete h.prodMin;
         delete h.prodMax;
       }
@@ -2333,9 +2360,10 @@ window.FarmGod.Main = (function (Library, Translation) {
         .sort((a, b) => a.ts - b.ts)
         .forEach((e) => {
           let rawAtE = forecastRaw(m, cur.raw, (e.ts - cur.time) / 3600);
-          // stock only estimated (no scout report): assume the earlier attack
-          // empties the village; stock known exactly: subtract its capacity
-          cur = { time: e.ts, raw: takeFrom(m, rawAtE, m.exact ? e.cap : Infinity) };
+          // stock known (scouted / emptied recently): subtract the capacity;
+          // stock only extrapolated: assume the earlier attack empties it
+          let known = stockKnownAt(historyOf(farm), m, e.ts);
+          cur = { time: e.ts, raw: takeFrom(m, rawAtE, known ? e.cap : Infinity) };
         });
       return lootableOf(m, forecastRaw(m, cur.raw, (t - cur.time) / 3600));
     };
@@ -2581,14 +2609,16 @@ window.FarmGod.Main = (function (Library, Translation) {
             let stock = stockBefore(first);
             if (stock < templateB.capacity * RULES.bFillRatio) break;
             if (donor) dropEntry(donor);
-            group.slice(1).forEach(dropEntry);
+            group.slice(1, perB).forEach(dropEntry);
             origin.units = origin.units.map((u, i) => u + (templateA.units[i] || 0) - templateB.units[i]);
             makeB(first, stock);
           }
         }
 
         if (canGrow) {
-          // 2b: enlarge planned A attacks on the fullest villages to B
+          // 2b: enlarge planned A attacks on the fullest villages to B. If the
+          // troops at home are not enough, the weakest other A attacks give
+          // theirs - as long as the bigger haul makes up for what they lose.
           while (true) {
             let upgradeable = entries()
               .filter((entry) => entry.template.name == 'a' && !entry.farm.is_new)
@@ -2596,10 +2626,30 @@ window.FarmGod.Main = (function (Library, Translation) {
               .filter((x) => x.stock >= templateB.capacity * RULES.bFillRatio)
               .sort((x, y) => y.stock - x.stock);
             if (!upgradeable.length) break;
+            let best = upgradeable[0];
             let unitsLeft = lib.subtractArrays(origin.units, extra);
-            if (!unitsLeft) break;
+            let donors = [];
+            if (!unitsLeft) {
+              let gain = Math.min(best.stock, templateB.capacity) - best.entry.capacity;
+              let pool = entries()
+                .filter((e) => e.template.name == 'a' && e !== best.entry)
+                .sort((x, y) => x.expected - y.expected || y.travel - x.travel);
+              let units = origin.units.slice();
+              let lost = 0;
+              for (let e of pool) {
+                donors.push(e);
+                lost += e.expected;
+                units = units.map((u, i) => u + (templateA.units[i] || 0));
+                unitsLeft = lib.subtractArrays(units, extra);
+                if (unitsLeft || lost > gain) break;
+              }
+              if (!unitsLeft || lost > gain) break;
+              donors.forEach(dropEntry);
+              unitsLeft = lib.subtractArrays(origin.units, extra);
+              if (!unitsLeft) break;
+            }
             origin.units = unitsLeft;
-            makeB(upgradeable[0].entry, upgradeable[0].stock);
+            makeB(best.entry, best.stock);
           }
         }
       });
@@ -2747,6 +2797,7 @@ window.FarmGod.Main = (function (Library, Translation) {
       parseScoutReport,
       learnFromReports,
       buildModel,
+      stockKnownAt,
       forecastRaw,
       lootableOf,
       takeFrom,
