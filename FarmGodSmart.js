@@ -58,6 +58,8 @@
 //    Auswertung den letzten Bericht der Farm-Zeile noch nicht (von Hand, anderes Gerät, Bericht
 //    noch nicht geladen), steht er trotzdem als Beute-Zeile im Popup (voll → Kapazität/Kapazität,
 //    sonst ?/Kapazität).
+//  - Einstellung "Truppen spätestens zurück nach X Stunden" (leer = keine Grenze): Angriffe, deren
+//    Hin- + Rückweg länger dauert, werden gar nicht geplant – gilt für A, B und Proben.
 //  - Der Farm-Assistent zeigt je Dorf nur den letzten Bericht. Für Dörfer ohne Gebäudedaten sucht
 //    das Skript einmal am Tag in der Berichtsübersicht (Angriffe, bis 5 Seiten) den letzten
 //    Spähbericht und übernimmt daraus die Gebäude.
@@ -629,6 +631,8 @@ window.FarmGod.Translation = (function () {
           'Use the other template if the preferred one does not fit:',
         newbarbsMaxPoints:
           'Include barbarian/bonus villages without a report up to this many points (0 = off):',
+        maxReturnHours:
+          'Troops must be back home within this many hours (empty = no limit):',
         button: 'Plan farms',
       },
       table: {
@@ -703,6 +707,8 @@ window.FarmGod.Translation = (function () {
           'Use the other template if the preferred one does not fit:',
         newbarbsMaxPoints:
           'Include barbarian/bonus villages without a report up to this many points (0 = off):',
+        maxReturnHours:
+          'Troops must be back home within this many hours (empty = no limit):',
         button: 'Farm megtervezÃ©se',
       },
       table: {
@@ -775,6 +781,8 @@ window.FarmGod.Translation = (function () {
           'Use the other template if the preferred one does not fit:',
         newbarbsMaxPoints:
           'Include barbarian/bonus villages without a report up to this many points (0 = off):',
+        maxReturnHours:
+          'Troops must be back home within this many hours (empty = no limit):',
         button: 'Plan farms',
       },
       table: {
@@ -836,6 +844,8 @@ window.FarmGod.Translation = (function () {
           'Barbaren-/Bonusdörfer ohne Bericht mit einplanen (erster Angriff geht blind raus):',
         newbarbsMaxPoints:
           'Barbaren-/Bonusdörfer ohne Bericht mit einplanen, bis so viele Punkte (0 = aus):',
+        maxReturnHours:
+          'Truppen sollen spätestens nach so vielen Stunden zurück sein (leer = egal):',
         autoProduction:
           'Produktion jedes Dorfes automatisch anhand seiner Punkte schätzen:',
         production:
@@ -1632,7 +1642,7 @@ window.FarmGod.Main = (function (Library, Translation) {
   const loadSettings = function () {
     let options = JSON.parse(localStorage.getItem(SETTINGS_KEY)) || null;
     if (!options) return null;
-    let defaults = { optionGroup: 0, optionNewbarbsMaxPoints: 500 };
+    let defaults = { optionGroup: 0, optionNewbarbsMaxPoints: 500, optionMaxReturnHours: 0 };
     for (let key in defaults) {
       if (typeof options[key] === 'undefined') options[key] = defaults[key];
     }
@@ -1675,6 +1685,10 @@ window.FarmGod.Main = (function (Library, Translation) {
               0,
               parseFloat($('.optionNewbarbsMaxPoints').val()) || 0
             ),
+            optionMaxReturnHours: Math.max(
+              0,
+              parseFloat(String($('.optionMaxReturnHours').val()).replace(',', '.')) || 0
+            ),
           };
           localStorage.setItem(SETTINGS_KEY, JSON.stringify(options));
           Dialog.close();
@@ -1701,7 +1715,7 @@ window.FarmGod.Main = (function (Library, Translation) {
       options.optionNewbarbsMaxPoints
     )
       .then((data) => {
-        let plan = createPlanning({}, data);
+        let plan = createPlanning(options, data);
         $('.farmGodContent').remove();
         $('#am_widget_Farm').first().before(buildTable(plan));
 
@@ -1790,6 +1804,7 @@ window.FarmGod.Main = (function (Library, Translation) {
     let options = loadSettings() || {
       optionGroup: 0,
       optionNewbarbsMaxPoints: 500,
+      optionMaxReturnHours: 0,
     };
 
     return $.when(buildGroupSelect(options.optionGroup)).then(
@@ -1801,6 +1816,9 @@ window.FarmGod.Main = (function (Library, Translation) {
                   <tr><td>${t.options.group}</td><td>${groupSelect}</td></tr>
                   <tr><td>${t.options.newbarbsMaxPoints
           }</td><td><input type="text" size="5" class="optionNewbarbsMaxPoints" value="${options.optionNewbarbsMaxPoints
+          }"></td></tr>
+                  <tr><td>${t.options.maxReturnHours
+          }</td><td><input type="text" size="5" class="optionMaxReturnHours" value="${options.optionMaxReturnHours || ''
           }"></td></tr>
                 </table></div><br><input type="button" class="btn optionButton" value="${t.options.button
           }"></div>`;
@@ -2428,6 +2446,11 @@ window.FarmGod.Main = (function (Library, Translation) {
   const createPlanning = function (options, data) {
     let plan = { counter: 0, farms: {} };
     let serverTime = Math.round(lib.getCurrentServerTime() / 1000);
+    // player setting: troops must be back home within this many hours
+    // (round trip); 0/empty = no limit
+    const maxReturnSec =
+      Math.max(0, parseFloat((options || {}).optionMaxReturnHours) || 0) * 3600;
+    const tooFar = (travel) => maxReturnSec > 0 && 2 * travel > maxReturnSec;
 
     const hasLootInfo = (farm) =>
       farm.hasOwnProperty('has_loot_info') && farm.has_loot_info;
@@ -2628,6 +2651,7 @@ window.FarmGod.Main = (function (Library, Translation) {
         o.candidates.forEach((c) => {
           let farm = data.farms.farms[c.coord];
           let travel = Math.round(c.dis * choice.template.speed * 60);
+          if (tooFar(travel)) return;
           let arrival = serverTime + travel + Math.round(plan.counter / 5);
           let capacity = choice.template.capacity || 0;
           let expected = Math.min(lootableAt(farm, arrival), capacity);
@@ -2806,6 +2830,7 @@ window.FarmGod.Main = (function (Library, Translation) {
             let farm = data.farms.farms[c.coord];
             if (farm.is_new || planned[c.coord]) return;
             let travel = Math.round(c.dis * templateB.speed * 60);
+            if (tooFar(travel)) return;
             let arrival = serverTime + travel + Math.round(plan.counter / 5);
             if (!bWorthy(farm, arrival)) return;
             let stock = lootableAt(farm, arrival);
@@ -2834,7 +2859,7 @@ window.FarmGod.Main = (function (Library, Translation) {
         o.candidates.forEach((c) => {
           if (!data.farms.farms[c.coord].is_new || planned[c.coord]) return;
           let travel = Math.round(c.dis * templateA.speed * 60);
-          if (travel <= RULES.probeMaxTravelHours * 3600) probes.push({ o, c, travel });
+          if (travel <= RULES.probeMaxTravelHours * 3600 && !tooFar(travel)) probes.push({ o, c, travel });
         })
       );
       probes.sort((x, y) => x.travel - y.travel);

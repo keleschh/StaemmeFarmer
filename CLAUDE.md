@@ -151,7 +151,8 @@ Der blaue Punkt (`dots/blue.webp`) heißt nur "letzter Bericht ist ein Spähberi
 Offen: Ergebnis nach ein paar Tagen an der Auswertungszeile prüfen ("Ø voll" sollte steigen).
 
 ### 5. Tests – **erledigt**, ausbauen bei Bedarf
-72 Tests in `test/` (Parser, getData, createPlanning, kompletter Ablauf, Backfill, Auswertung,
+74 Tests in `test/` (Parser, getData, createPlanning, kompletter Ablauf, Backfill, Auswertung,
+Rückkehr-Grenze `maxreturn.test.js`,
 Beute-Tooltip `tooltip.test.js`,
 Spähzeile ohne Bericht `scoutrow.test.js`, Vorrats-Vertrauen und Berichtszuordnung `overcommit.test.js`,
 Anfragen-Drosselung `requests.test.js`, Sperrseite `blocked.test.js`, Befehlskapazität `commands.test.js`,
@@ -193,4 +194,7 @@ Spielmeldung, synthetisch in `blocked.test.js`).
 - Verhalten nur in `FarmGodSmart.js` ändern, danach `node --check FarmGodSmart.js` (und `npm test`, sobald vorhanden).
 - Kommentarblock oben und die `RULES`-Kommentare aktuell halten; der Spieler liest sie.
 - Keine neuen Einstellungen im Dialog ohne Not – die Vorgabe des Spielers ist "so wenig Entscheidungen wie möglich".
+  (Vorhanden: Gruppe, Punktelimit neue Barbarendörfer, und seit 30.08.2026 auf Spielerwunsch
+  `optionMaxReturnHours` = "Truppen spätestens zurück nach X Stunden", 0/leer = aus; wirkt als
+  Filter `tooFar` auf Hin+Rückweg in Durchgang 1, 2c und 2d von `createPlanning`.)
 - Alles Neue muss ohne Spähberichte funktionieren; Spähdaten sind nur ein Bonus.
