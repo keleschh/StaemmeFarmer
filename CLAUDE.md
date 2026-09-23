@@ -190,8 +190,23 @@ Spielmeldung, synthetisch in `blocked.test.js`).
   Auswertungsstatistik – akzeptiert.
 - Zwei Browser-Tabs überschreiben sich gegenseitig das Gedächtnis. Akzeptiert.
 
+## Konter.js (seit 23.09.2026)
+Zweites, eigenständiges Skript: auf der Übersicht "Eingehende Angriffe" je Angriff die Links
+"Konter (Off)" und "Rest rausschicken", die den Versammlungsplatz des angegriffenen Dorfs mit Ziel
+(Herkunftsdorf des Angreifers) und Truppen vorbefüllt öffnen. Spec: `docs/superpowers/specs/2026-09-23-konter-design.md`,
+Plan: `docs/superpowers/plans/2026-09-23-konter.md`.
+- Verifizierte URL-Form (HP20/dec1): `screen=place&x=X&y=Y&from=simulator&att_<unit>=n`. `target=<id>` wird
+  zusammen mit `from=simulator` ignoriert, `att_*` ohne `from=simulator` ebenfalls.
+- `RULES`: `offUnits` (axe, light, marcher, ram, catapult, knight), `restUnits` (spear, sword, archer, spy, heavy),
+  `cancelWindowMin` 10, `cancelMarginSec` 30. Nur Einheiten aus `game_data.units`; snob/militia nie.
+- Anfragen: `get_unit_info` (Cache `Konter_unitInfo`) + 1 × Versammlungsplatz je angegriffenem Dorf
+  (`data-all-count` = Truppen zu Hause). Sperrseite → Meldung.
+- Tests: `test/konter.test.js` mit eigenem Harness `test/konter-setup.js`, Fixtures `test/fixtures/konter/`.
+- Offen: Vorlagen-Dialog zum Variieren von Off/Rest (der Spieler ändert bis dahin die Zahlen im Formular).
+  Der Spieler spielt seit 23.09.2026 auf HP20 (`dec1`, Dorf 391); der de259-Account wird gelöscht.
+
 ## Regeln bei Änderungen
-- Verhalten nur in `FarmGodSmart.js` ändern, danach `node --check FarmGodSmart.js` (und `npm test`, sobald vorhanden).
+- Verhalten nur in `FarmGodSmart.js` bzw. `Konter.js` ändern, danach `node --check <Datei>` und `cd test && npm test`.
 - Kommentarblock oben und die `RULES`-Kommentare aktuell halten; der Spieler liest sie.
 - Keine neuen Einstellungen im Dialog ohne Not – die Vorgabe des Spielers ist "so wenig Entscheidungen wie möglich".
   (Vorhanden: Gruppe, Punktelimit neue Barbarendörfer, und seit 30.08.2026 auf Spielerwunsch
