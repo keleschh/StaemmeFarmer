@@ -80,6 +80,8 @@ window.Konter = (function () {
     $table.find('tr').each((i, tr) => {
       const $td = $(tr).children('td');
       if ($td.length < 7) return; // Kopf- und Fußzeile
+      // nur Angriffe (die Übersicht kann auch Unterstützungen listen)
+      if (!$td.eq(0).find('img[src*="command/attack"]').length) return;
       const $target = $td.eq(1).find('a').first();
       const $origin = $td.eq(2).find('a').first();
       const idIn = (href, key) => {

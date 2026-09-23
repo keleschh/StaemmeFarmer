@@ -59,6 +59,11 @@ describe('Konter Parser', () => {
     const $table = $('<div>' + html + '</div>').find('#incomings_table');
     assert.equal(internals.parseIncomings($table)[0].slowestUnit, null);
   });
+  test('parseIncomings überspringt Unterstützungen (kein Angriffs-Icon)', () => {
+    const html = fixture('konter/incomings_table.html').replace('command/attack.webp', 'command/support.webp');
+    const $table = $('<div>' + html + '</div>').find('#incomings_table');
+    assert.equal(internals.parseIncomings($table).length, 0);
+  });
   test('parseHomeUnits liest data-all-count', () => {
     const $page = $('<div>' + fixture('konter/place_form_prefilled.html') + '</div>');
     assert.deepEqual(plain(internals.parseHomeUnits($page)), {
