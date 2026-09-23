@@ -176,14 +176,103 @@ window.Konter = (function () {
     };
   };
 
+  // ---- Anfragen ----
+  const isBlocked = function (body) {
+    return typeof body === 'string' &&
+      (/Blockierte Anfrage|zu viele Anfragen|Blocked request|too many requests/i.test(body) ||
+        /<input[^>]+type=["']?password/i.test(body));
+  };
+
+  const fetchHomeUnits = function (villageId) {
+    return $.get('/game.php?village=' + villageId + '&screen=place').then((html) => {
+      if (isBlocked(html)) return $.Deferred().reject('blocked').promise();
+      const $page = $('<div>').append($.parseHTML(String(html), document, false));
+      return parseHomeUnits($page);
+    });
+  };
+
+  // ---- Anzeige ----
+  const UNIT_NAMES = {
+    spear: 'Speer', sword: 'Schwert', axe: 'Axt', archer: 'Bogen', spy: 'Späher', light: 'LKav',
+    marcher: 'BBogen', heavy: 'SKav', ram: 'Ramme', catapult: 'Kata', knight: 'Pala', snob: 'AG', militia: 'Miliz',
+  };
+
+  const pad = (n) => (n < 10 ? '0' : '') + n;
+  const fmtTime = function (ms) {
+    const d = new Date(ms);
+    return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  };
+  const fmtLeft = function (ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    return Math.floor(s / 3600) + ':' + pad(Math.floor((s % 3600) / 60)) + ':' + pad(s % 60);
+  };
+  const fmtUnits = function (units) {
+    const parts = [];
+    for (const u in units) parts.push(units[u] + ' ' + (UNIT_NAMES[u] || u));
+    return parts.length ? parts.join(' · ') : '–';
+  };
+  const esc = (s) => $('<div>').text(String(s)).html();
+
+  const render = function (plans, nowMs) {
+    const rows = plans.map((p) => {
+      const a = p.attack;
+      const unit = a.slowestUnit ? ' <span class="grey">(' + esc(UNIT_NAMES[a.slowestUnit] || a.slowestUnit) + ')</span>' : '';
+      const konter = p.urlOff
+        ? '<a class="btn konter-off" href="' + p.urlOff + '">Konter (Off)</a>' +
+          (p.landsAt ? '<br><small>landet ca. ' + fmtTime(p.landsAt) + '</small>' : '')
+        : '<small>keine Off zu Hause</small>';
+      const rest = p.urlRest
+        ? '<a class="btn konter-rest" href="' + p.urlRest + '">Rest rausschicken</a><br><small>' +
+          fmtUnits(p.rest) + '<br>senden ab ' + fmtTime(p.sendFrom) + ' · abbrechen vor ' + fmtTime(p.cancelBefore) +
+          (nowMs < p.sendFrom ? '<br><b>noch nicht senden</b> (sonst nicht mehr abbrechbar)' : '') + '</small>'
+        : '<small>kein Rest zu Hause</small>';
+      return '<tr>' +
+        '<td>' + esc(a.villageName) + '</td>' +
+        '<td>' + esc(a.player) + '<br><small>' + esc(a.originName) + '</small>' + unit + '</td>' +
+        '<td>' + esc(a.arrivalText) + '<br><small>in ' + fmtLeft(a.arrival - nowMs) + '</small></td>' +
+        '<td>' + fmtUnits(p.off) + '</td>' +
+        '<td>' + konter + '</td>' +
+        '<td>' + rest + '</td>' +
+        '</tr>';
+    }).join('');
+    return '<div class="konterContent vis" style="margin-bottom:10px">' +
+      '<table class="vis" style="width:100%"><thead><tr>' +
+      '<th>Dorf</th><th>Angreifer</th><th>Ankunft</th><th>Off zu Hause</th><th>Konter</th><th>Rest</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table>' +
+      '<p class="small grey" style="margin:4px 0 0">Konter: volle Off sofort aufs Herkunftsdorf; war es ein Fake, in der Befehlsübersicht abbrechen (nur 10 Minuten nach dem Senden möglich). ' +
+      'Rest: Abbrechen-Trick – frühestens 10 Minuten vor der Ankunft senden, vor dem Einschlag abbrechen. Zahlen lassen sich am Versammlungsplatz vor "Angreifen" ändern.</p>' +
+      '</div>';
+  };
+
   const init = function () {
-    if (!$('#incomings_table').length) {
+    const $table = $('#incomings_table');
+    if (!$table.length) {
       UI.ErrorMessage(messages.wrongScreen);
       return;
     }
+    const attacks = parseIncomings($table);
+    if (!attacks.length) {
+      UI.InfoMessage(messages.noAttacks);
+      return;
+    }
+    const villageIds = [];
+    attacks.forEach((a) => { if (villageIds.indexOf(a.villageId) === -1) villageIds.push(a.villageId); });
+
+    $.when(ensureUnitInfo(), ...villageIds.map(fetchHomeUnits))
+      .then((unitInfo, ...homes) => {
+        const nowMs = serverNow();
+        const homeOf = {};
+        villageIds.forEach((id, i) => { homeOf[id] = homes[i]; });
+        const plans = attacks.map((a) => planFor(a, homeOf[a.villageId] || {}, unitInfo, nowMs));
+        $('.konterContent').remove();
+        $('#incomings_table').before(render(plans, nowMs));
+      })
+      .fail((err) => {
+        UI.ErrorMessage(err === 'blocked' ? messages.blocked : messages.failed);
+      });
   };
 
-  return { init, RULES, _internals: { messages, serverNow, parseArrival, parseIncomings, parseHomeUnits, splitUnits, placeUrl, planFor, ensureUnitInfo } };
+  return { init, RULES, _internals: { messages, serverNow, parseArrival, parseIncomings, parseHomeUnits, splitUnits, placeUrl, planFor, ensureUnitInfo, render, fetchHomeUnits, fmtTime } };
 })();
 
 window.Konter.init();

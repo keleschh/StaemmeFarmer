@@ -111,3 +111,67 @@ describe('Konter Planung', () => {
     assert.match(p.urlRest, /att_spear=5$/);
   });
 });
+
+describe('Konter Ablauf', () => {
+  test('rendert je Angriff eine Zeile mit Konter- und Rest-Link', async () => {
+    const env = createKonterEnv();
+    await settleKonter(env);
+    const { $ } = env;
+    assert.equal(env.messages.error.length, 0);
+    const $rows = $('.konterContent table tbody tr');
+    assert.equal($rows.length, 1);
+    const $off = $rows.find('a.konter-off');
+    const $rest = $rows.find('a.konter-rest');
+    assert.equal($off.attr('href'), '/game.php?village=391&screen=place&x=484&y=513&from=simulator&att_axe=1340&att_light=449&att_ram=30&att_catapult=25&att_knight=1');
+    assert.equal($rest.attr('href'), '/game.php?village=391&screen=place&x=484&y=513&from=simulator&att_spear=21&att_sword=30&att_spy=79');
+    const text = $rows.text();
+    assert.match(text, /Aaronboy9449/);
+    assert.match(text, /09:55:39/);
+    assert.match(text, /1340 Axt/);
+    assert.match(text, /senden ab 09:45:39/);
+    assert.match(text, /abbrechen vor 09:55:09/);
+    assert.match(text, /landet ca\. \d{2}:\d{2}:\d{2}/);
+    // Tabelle steht vor der Spieltabelle
+    assert.equal($('.konterContent').next().attr('id'), 'incomings_table');
+    // ein Versammlungsplatz-Aufruf je Dorf, Einheitendaten einmal
+    assert.equal(env.window.requests.filter((u) => u.includes('screen=place')).length, 1);
+    assert.equal(env.window.requests.filter((u) => u.includes('get_unit_info')).length, 1);
+  });
+  test('"Rest" zu früh: Hinweis "noch nicht senden"', async () => {
+    const env = createKonterEnv({ serverTime: '9:30:00' });
+    await settleKonter(env);
+    assert.match(env.$('.konterContent').text(), /noch nicht senden/);
+  });
+  test('zwei Angriffe auf dasselbe Dorf: zwei Zeilen, ein Versammlungsplatz-Aufruf', async () => {
+    const one = fixture('konter/incomings_table.html');
+    const row = one.match(/<tr style="white-space:nowrap"[\s\S]*?<\/tr>/)[0];
+    const second = row.replace(/655074211/g, '655074212').replace('09:55:39', '10:05:00').replace('id=310', 'id=311').replace(/\(484\|513\)/g, '(480|520)');
+    const env = createKonterEnv({ incomingsHtml: one.replace(row, row + second) });
+    await settleKonter(env);
+    assert.equal(env.$('.konterContent table tbody tr').length, 2);
+    assert.equal(env.window.requests.filter((u) => u.includes('screen=place')).length, 1);
+    assert.match(env.$('.konterContent a.konter-off').eq(1).attr('href'), /x=480&y=520/);
+  });
+  test('keine Angriffe: Hinweis, keine Tabelle', async () => {
+    const one = fixture('konter/incomings_table.html');
+    const row = one.match(/<tr style="white-space:nowrap"[\s\S]*?<\/tr>/)[0];
+    const env = createKonterEnv({ incomingsHtml: one.replace(row, '') });
+    await settleKonter(env);
+    assert.equal(env.messages.info.length, 1);
+    assert.equal(env.$('.konterContent').length, 0);
+  });
+  test('Sperrseite beim Versammlungsplatz: Meldung statt Tabelle', async () => {
+    const env = createKonterEnv({ blockedPlace: true });
+    await settleKonter(env);
+    assert.equal(env.messages.error.length, 1);
+    assert.match(env.messages.error[0], /blockiert/);
+    assert.equal(env.$('.konterContent').length, 0);
+  });
+  test('zweiter Start ersetzt die Tabelle statt sie zu verdoppeln', async () => {
+    const env = createKonterEnv();
+    await settleKonter(env);
+    env.konter.init();
+    await tick(100);
+    assert.equal(env.$('.konterContent').length, 1);
+  });
+});
