@@ -2,6 +2,13 @@
 
 Stand: 23.09.2026. Freigegeben vom Spieler (Chat, 23.09.2026). Verifiziert auf Welt HP20 (`dec1`).
 
+**Änderung nach dem ersten Einsatz (23.09.2026):** Der Spieler will raus, nach dem Einschlag rein und dann
+mit denselben Truppen kontern. Deshalb ersetzt "Ausweichen" (alle Truppen außer AG/Miliz, Abbrechen-Trick,
+mit "zurück ca.") das frühere "Rest rausschicken"; "Konter (Off)" ist der zweite Schritt nach der Rückkehr.
+`RULES.restUnits` wurde zu `RULES.neverUnits` (snob, militia). Zusätzlich zeigt die Zeile "seine Truppen
+frühestens zurück" (Ankunft + Laufzeit der Einheit im Icon). Der Rest dieses Dokuments beschreibt den
+ursprünglichen Entwurf.
+
 ## Ziel
 
 Ein zweites, eigenständiges Skript neben FarmGodSmart. Wenn ein Angriff auf ein eigenes Dorf

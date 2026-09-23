@@ -6,13 +6,16 @@
 // Das Skript zeigt über der Spieltabelle je eingehendem Angriff eine Zeile mit
 //   - dem Angreifer (Spieler + Herkunftsdorf), Ankunftszeit und Restzeit,
 //   - der langsamsten Einheit laut Spiel (wenn der Angriff markiert ist),
+//   - wann seine Truppen frühestens wieder daheim sind (Ankunft + Laufzeit der Einheit im Icon),
 //   - den Off-Truppen, die im angegriffenen Dorf zu Hause sind,
-//   - Link "Konter (Off)": öffnet den Versammlungsplatz des angegriffenen Dorfs mit dem
-//     Herkunftsdorf des Angreifers als Ziel und der vollen Off eingetragen
-//     (Axt, LKav, Berittene Bogenschützen, Rammen, Katapulte, Paladin – was es auf der Welt gibt),
-//   - Link "Rest rausschicken": dasselbe mit dem Rest (Speer, Schwert, Bogen, Späher, SKav)
-//     für den Abbrechen-Trick, dazu "senden ab" (Ankunft − 10 min, sonst ist der Befehl
-//     beim Einschlag nicht mehr abbrechbar) und "abbrechen vor" (Ankunft − 30 s).
+//   - Link "Ausweichen": öffnet den Versammlungsplatz des angegriffenen Dorfs mit dem
+//     Herkunftsdorf des Angreifers als Ziel und ALLEN Truppen eingetragen (Abbrechen-Trick):
+//     senden ab Ankunft − 10 min (früher ist der Befehl beim Einschlag nicht mehr abbrechbar),
+//     abbrechen vor Ankunft − 30 s, dann kommen die Truppen nach derselben Zeit zurück
+//     ("zurück ca." rechnet mit Senden bei "senden ab"; je später gesendet, desto früher zurück).
+//   - Link "Konter (Off)": dasselbe mit der vollen Off (Axt, LKav, Berittene Bogenschützen,
+//     Rammen, Katapulte, Paladin – was es auf der Welt gibt). Gedacht als zweiter Schritt,
+//     sobald die Truppen vom Ausweichen zurück sind: Skript neu starten, Konter klicken.
 // Adelsgeschlechter und Miliz bleiben immer zu Hause. Die Zahlen lassen sich im
 // Formular vor dem Klick auf "Angreifen" ändern.
 //
@@ -32,8 +35,8 @@ window.Konter = (function () {
   const RULES = {
     // Konter: alles davon, was zu Hause ist (nur Einheiten, die es auf der Welt gibt)
     offUnits: ['axe', 'light', 'marcher', 'ram', 'catapult', 'knight'],
-    // "Rest rausschicken": alles davon, was zu Hause ist
-    restUnits: ['spear', 'sword', 'archer', 'spy', 'heavy'],
+    // bleiben beim Ausweichen immer zu Hause (Ausweichen = alle anderen Einheiten der Welt)
+    neverUnits: ['snob', 'militia'],
     // Spielregel: ein Befehl ist nur 10 Minuten nach dem Senden abbrechbar
     cancelWindowMin: 10,
     // "abbrechen vor" = Ankunft minus diese Sicherheit
@@ -148,9 +151,10 @@ window.Konter = (function () {
   };
 
   const splitUnits = function (home, worldUnits) {
+    const dodgeNames = worldUnits.filter((u) => RULES.neverUnits.indexOf(u) === -1);
     return {
       off: pick(home, RULES.offUnits, worldUnits),
-      rest: pick(home, RULES.restUnits, worldUnits),
+      dodge: pick(home, dodgeNames, worldUnits),
     };
   };
 
@@ -163,23 +167,30 @@ window.Konter = (function () {
 
   const planFor = function (attack, home, unitInfo, nowMs) {
     const worldUnits = (window.game_data && game_data.units) || Object.keys(home);
-    const { off, rest } = splitUnits(home, worldUnits);
+    const { off, dodge } = splitUnits(home, worldUnits);
     const hasOff = Object.keys(off).length > 0;
-    const hasRest = Object.keys(rest).length > 0;
+    const hasDodge = Object.keys(dodge).length > 0;
     const dist = attack.villageCoord && attack.originCoord
       ? Math.hypot(attack.villageCoord.x - attack.originCoord.x, attack.villageCoord.y - attack.originCoord.y)
       : attack.distance;
     let slowest = 0;
     for (const u in off) if (unitInfo && unitInfo[u] && unitInfo[u].speed > slowest) slowest = unitInfo[u].speed;
+    const enemySpeed = attack.slowestUnit && unitInfo && unitInfo[attack.slowestUnit] ? unitInfo[attack.slowestUnit].speed : 0;
+    const sendFrom = attack.arrival - RULES.cancelWindowMin * 60000;
+    const cancelBefore = attack.arrival - RULES.cancelMarginSec * 1000;
     return {
       attack,
       off,
-      rest,
+      dodge,
       urlOff: hasOff && attack.originCoord ? placeUrl(attack.villageId, attack.originCoord, off) : null,
-      urlRest: hasRest && attack.originCoord ? placeUrl(attack.villageId, attack.originCoord, rest) : null,
+      urlDodge: hasDodge && attack.originCoord ? placeUrl(attack.villageId, attack.originCoord, dodge) : null,
       landsAt: hasOff && slowest ? Math.round(nowMs + dist * slowest * 60000) : null,
-      sendFrom: attack.arrival - RULES.cancelWindowMin * 60000,
-      cancelBefore: attack.arrival - RULES.cancelMarginSec * 1000,
+      sendFrom,
+      cancelBefore,
+      // Abbrechen-Trick: Rückweg dauert so lange wie der Hinweg (Annahme: gesendet bei "senden ab")
+      backAt: cancelBefore + (cancelBefore - sendFrom),
+      // seine Truppen sind frühestens Ankunft + Laufzeit wieder daheim (nur mit Einheiten-Icon)
+      enemyHomeAt: enemySpeed ? Math.round(attack.arrival + dist * enemySpeed * 60000) : null,
     };
   };
 
@@ -224,30 +235,34 @@ window.Konter = (function () {
     const rows = plans.map((p) => {
       const a = p.attack;
       const unit = a.slowestUnit ? ' <span class="grey">(' + esc(UNIT_NAMES[a.slowestUnit] || a.slowestUnit) + ')</span>' : '';
+      const enemyHome = p.enemyHomeAt ? '<br><small>seine Truppen frühestens zurück ' + fmtTime(p.enemyHomeAt) + '</small>' : '';
+      const dodge = p.urlDodge
+        ? '<a class="btn konter-dodge" href="' + p.urlDodge + '">Ausweichen</a><br><small>' +
+          fmtUnits(p.dodge) + '<br>senden ab ' + fmtTime(p.sendFrom) + ' · abbrechen vor ' + fmtTime(p.cancelBefore) +
+          '<br>zurück ca. ' + fmtTime(p.backAt) + ' (je später gesendet, desto früher)' +
+          (nowMs < p.sendFrom ? '<br><b>noch nicht senden</b> (sonst nicht mehr abbrechbar)' : '') + '</small>'
+        : '<small>keine Truppen zu Hause</small>';
       const konter = p.urlOff
         ? '<a class="btn konter-off" href="' + p.urlOff + '">Konter (Off)</a>' +
           (p.landsAt ? '<br><small>landet ca. ' + fmtTime(p.landsAt) + '</small>' : '')
         : '<small>keine Off zu Hause</small>';
-      const rest = p.urlRest
-        ? '<a class="btn konter-rest" href="' + p.urlRest + '">Rest rausschicken</a><br><small>' +
-          fmtUnits(p.rest) + '<br>senden ab ' + fmtTime(p.sendFrom) + ' · abbrechen vor ' + fmtTime(p.cancelBefore) +
-          (nowMs < p.sendFrom ? '<br><b>noch nicht senden</b> (sonst nicht mehr abbrechbar)' : '') + '</small>'
-        : '<small>kein Rest zu Hause</small>';
       return '<tr>' +
         '<td>' + esc(a.villageName) + '</td>' +
-        '<td>' + esc(a.player) + '<br><small>' + esc(a.originName) + '</small>' + unit + '</td>' +
+        '<td>' + esc(a.player) + '<br><small>' + esc(a.originName) + '</small>' + unit + enemyHome + '</td>' +
         '<td>' + esc(a.arrivalText) + '<br><small>in ' + fmtLeft(a.arrival - nowMs) + '</small></td>' +
         '<td>' + fmtUnits(p.off) + '</td>' +
+        '<td>' + dodge + '</td>' +
         '<td>' + konter + '</td>' +
-        '<td>' + rest + '</td>' +
         '</tr>';
     }).join('');
     return '<div class="konterContent vis" style="margin-bottom:10px">' +
       '<table class="vis" style="width:100%"><thead><tr>' +
-      '<th>Dorf</th><th>Angreifer</th><th>Ankunft</th><th>Off zu Hause</th><th>Konter</th><th>Rest</th>' +
+      '<th>Dorf</th><th>Angreifer</th><th>Ankunft</th><th>Off zu Hause</th><th>1. Ausweichen</th><th>2. Konter</th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table>' +
-      '<p class="small grey" style="margin:4px 0 0">Konter: volle Off sofort aufs Herkunftsdorf; war es ein Fake, in der Befehlsübersicht abbrechen (nur 10 Minuten nach dem Senden möglich). ' +
-      'Rest: Abbrechen-Trick – frühestens 10 Minuten vor der Ankunft senden, vor dem Einschlag abbrechen. Zahlen lassen sich am Versammlungsplatz vor "Angreifen" ändern.</p>' +
+      '<p class="small grey" style="margin:4px 0 0">1. Ausweichen: alle Truppen als Angriff aufs Herkunftsdorf, frühestens 10 Minuten vor der Ankunft senden, ' +
+      'kurz vor dem Einschlag in der Befehlsübersicht abbrechen – die Truppen kommen nach derselben Zeit zurück. ' +
+      '2. Konter: sobald sie zurück sind, Skript neu starten und "Konter (Off)" klicken. ' +
+      'War der Angriff ein Fake, den Konter innerhalb von 10 Minuten abbrechen. Zahlen lassen sich am Versammlungsplatz vor "Angreifen" ändern.</p>' +
       '</div>';
   };
 

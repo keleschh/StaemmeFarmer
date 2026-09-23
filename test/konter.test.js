@@ -9,7 +9,7 @@ describe('Konter.js Skelett', () => {
     const env = createKonterEnv({ noTable: true });
     assert.equal(typeof env.konter.init, 'function');
     assert.deepEqual(plain(env.konter.RULES.offUnits), ['axe', 'light', 'marcher', 'ram', 'catapult', 'knight']);
-    assert.deepEqual(plain(env.konter.RULES.restUnits), ['spear', 'sword', 'archer', 'spy', 'heavy']);
+    assert.deepEqual(plain(env.konter.RULES.neverUnits), ['snob', 'militia']);
     assert.equal(env.konter.RULES.cancelWindowMin, 10);
     assert.equal(env.konter.RULES.cancelMarginSec, 30);
     assert.equal(typeof env.internals, 'object');
@@ -77,15 +77,16 @@ describe('Konter Planung', () => {
   const { $, internals } = env;
   const home = { spear: 21, sword: 30, axe: 1340, spy: 79, light: 449, heavy: 0, ram: 30, catapult: 25, knight: 1, snob: 0 };
 
-  test('splitUnits: Off / Rest nur mit Einheiten der Welt und > 0', () => {
-    const { off, rest } = plain(internals.splitUnits(home, UNITS));
+  test('splitUnits: Off nur Off-Einheiten, Ausweichen alle Truppen der Welt mit > 0', () => {
+    const { off, dodge } = plain(internals.splitUnits(home, UNITS));
     assert.deepEqual(off, { axe: 1340, light: 449, ram: 30, catapult: 25, knight: 1 });
-    assert.deepEqual(rest, { spear: 21, sword: 30, spy: 79 });
+    assert.deepEqual(dodge, { spear: 21, sword: 30, axe: 1340, spy: 79, light: 449, ram: 30, catapult: 25, knight: 1 });
   });
-  test('splitUnits: AG bleibt immer zu Hause', () => {
-    const { off, rest } = plain(internals.splitUnits(Object.assign({}, home, { snob: 2 }), UNITS));
+  test('splitUnits: AG und Miliz bleiben immer zu Hause', () => {
+    const { off, dodge } = plain(internals.splitUnits(Object.assign({}, home, { snob: 2, militia: 40 }), UNITS.concat('militia')));
     assert.equal(off.snob, undefined);
-    assert.equal(rest.snob, undefined);
+    assert.equal(dodge.snob, undefined);
+    assert.equal(dodge.militia, undefined);
   });
   test('placeUrl baut die verifizierte URL-Form', () => {
     assert.equal(
@@ -100,9 +101,13 @@ describe('Konter Planung', () => {
     const now = internals.serverNow();
     const p = internals.planFor(attack, home, unitInfo, now);
     assert.equal(p.urlOff, '/game.php?village=391&screen=place&x=484&y=513&from=simulator&att_axe=1340&att_light=449&att_ram=30&att_catapult=25&att_knight=1');
-    assert.equal(p.urlRest, '/game.php?village=391&screen=place&x=484&y=513&from=simulator&att_spear=21&att_sword=30&att_spy=79');
+    assert.equal(p.urlDodge, '/game.php?village=391&screen=place&x=484&y=513&from=simulator&att_spear=21&att_sword=30&att_axe=1340&att_spy=79&att_light=449&att_ram=30&att_catapult=25&att_knight=1');
     assert.equal(p.sendFrom, attack.arrival - 10 * 60000);
     assert.equal(p.cancelBefore, attack.arrival - 30000);
+    // gesendet bei "senden ab", abgebrochen bei "abbrechen vor" -> zurück nach derselben Zeit nochmal
+    assert.equal(p.backAt, p.cancelBefore + (p.cancelBefore - p.sendFrom));
+    // seine Kata-Truppen sind frühestens Ankunft + Laufzeit wieder daheim
+    assert.equal(p.enemyHomeAt, Math.round(attack.arrival + Math.hypot(1, 3) * unitInfo.catapult.speed * 60000));
     // Entfernung aus den Koordinaten (483|516 -> 484|513), langsamste Off-Einheit = Katapult
     const dist = Math.hypot(1, 3);
     assert.equal(p.landsAt, Math.round(now + dist * unitInfo.catapult.speed * 60000));
@@ -113,7 +118,8 @@ describe('Konter Planung', () => {
     const p = internals.planFor(attack, { spear: 5, axe: 0 }, {}, internals.serverNow());
     assert.equal(p.urlOff, null);
     assert.equal(p.landsAt, null);
-    assert.match(p.urlRest, /att_spear=5$/);
+    assert.equal(p.enemyHomeAt, null);
+    assert.match(p.urlDodge, /att_spear=5$/);
   });
 });
 
@@ -126,15 +132,17 @@ describe('Konter Ablauf', () => {
     const $rows = $('.konterContent table tbody tr');
     assert.equal($rows.length, 1);
     const $off = $rows.find('a.konter-off');
-    const $rest = $rows.find('a.konter-rest');
+    const $dodge = $rows.find('a.konter-dodge');
     assert.equal($off.attr('href'), '/game.php?village=391&screen=place&x=484&y=513&from=simulator&att_axe=1340&att_light=449&att_ram=30&att_catapult=25&att_knight=1');
-    assert.equal($rest.attr('href'), '/game.php?village=391&screen=place&x=484&y=513&from=simulator&att_spear=21&att_sword=30&att_spy=79');
+    assert.equal($dodge.attr('href'), '/game.php?village=391&screen=place&x=484&y=513&from=simulator&att_spear=21&att_sword=30&att_axe=1340&att_spy=79&att_light=449&att_ram=30&att_catapult=25&att_knight=1');
     const text = $rows.text();
     assert.match(text, /Aaronboy9449/);
     assert.match(text, /09:55:39/);
     assert.match(text, /1340 Axt/);
     assert.match(text, /senden ab 09:45:39/);
     assert.match(text, /abbrechen vor 09:55:09/);
+    assert.match(text, /zurück ca\. 10:04:39/);
+    assert.match(text, /seine Truppen frühestens zurück \d{2}:\d{2}:\d{2}/);
     assert.match(text, /landet ca\. \d{2}:\d{2}:\d{2}/);
     // Tabelle steht vor der Spieltabelle
     assert.equal($('.konterContent').next().attr('id'), 'incomings_table');
@@ -142,7 +150,7 @@ describe('Konter Ablauf', () => {
     assert.equal(env.window.requests.filter((u) => u.includes('screen=place')).length, 1);
     assert.equal(env.window.requests.filter((u) => u.includes('get_unit_info')).length, 1);
   });
-  test('"Rest" zu früh: Hinweis "noch nicht senden"', async () => {
+  test('Ausweichen zu früh: Hinweis "noch nicht senden"', async () => {
     const env = createKonterEnv({ serverTime: '9:30:00' });
     await settleKonter(env);
     assert.match(env.$('.konterContent').text(), /noch nicht senden/);

@@ -192,13 +192,16 @@ Spielmeldung, synthetisch in `blocked.test.js`).
 
 ## Konter.js (seit 23.09.2026)
 Zweites, eigenständiges Skript: auf der Übersicht "Eingehende Angriffe" je Angriff die Links
-"Konter (Off)" und "Rest rausschicken", die den Versammlungsplatz des angegriffenen Dorfs mit Ziel
-(Herkunftsdorf des Angreifers) und Truppen vorbefüllt öffnen. Spec: `docs/superpowers/specs/2026-09-23-konter-design.md`,
+"1. Ausweichen" (alle Truppen, Abbrechen-Trick, mit "senden ab / abbrechen vor / zurück ca.") und
+"2. Konter (Off)" (volle Off, gedacht nach der Rückkehr), die den Versammlungsplatz des angegriffenen
+Dorfs mit Ziel (Herkunftsdorf des Angreifers) und Truppen vorbefüllt öffnen. Dazu "seine Truppen
+frühestens zurück" = Ankunft + Laufzeit der Einheit im Icon. Wunsch des Spielers (23.09.2026): raus,
+nach dem Einschlag rein, dann mit denselben Truppen kontern. Spec: `docs/superpowers/specs/2026-09-23-konter-design.md`,
 Plan: `docs/superpowers/plans/2026-09-23-konter.md`.
 - Verifizierte URL-Form (HP20/dec1): `screen=place&x=X&y=Y&from=simulator&att_<unit>=n`. `target=<id>` wird
   zusammen mit `from=simulator` ignoriert, `att_*` ohne `from=simulator` ebenfalls.
-- `RULES`: `offUnits` (axe, light, marcher, ram, catapult, knight), `restUnits` (spear, sword, archer, spy, heavy),
-  `cancelWindowMin` 10, `cancelMarginSec` 30. Nur Einheiten aus `game_data.units`; snob/militia nie.
+- `RULES`: `offUnits` (axe, light, marcher, ram, catapult, knight), `neverUnits` (snob, militia – Ausweichen nimmt
+  alle anderen Einheiten aus `game_data.units`), `cancelWindowMin` 10, `cancelMarginSec` 30.
 - Anfragen: `get_unit_info` (Cache `Konter_unitInfo`) + 1 × Versammlungsplatz je angegriffenem Dorf
   (`data-all-count` = Truppen zu Hause). Sperrseite → Meldung.
 - `ScriptAPI.register` braucht eine nicht-leere Kontaktangabe, sonst wirft das Spiel und das ganze Skript
