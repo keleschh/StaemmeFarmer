@@ -21,3 +21,12 @@ Das Sicherheits-Token `h=` ist durch `HASH` ersetzt.
 
 Noch ohne Fixture: Angriffsbericht **mit** Spähern (Frage "Rohstoffe vor oder nach Plünderung"),
 gelbe/rote Zeilen, Zeile mit "am 27.08. um …", mehrseitiger Farm-Assistent.
+
+## konter/ (Welt HP20 = dec1, 23.09.2026, Dorf 391 "MuMiiTRixX's Dorf" 483|516)
+- `incomings_table.html` – `#incomings_table` der Übersicht *Eingehende Angriffe* (`mode=incomings&subtype=attacks`)
+  mit einem echten Angriff (Kata-Icon, "heute um 09:55:39", Timer "0:13:37") und der Fußzeile.
+  Serverzeit beim Abruf: `23/09/2026` `9:42:02`.
+- `place_form_prefilled.html` – `#command-data-form` des Versammlungsplatzes, aufgerufen mit
+  `screen=place&target=2&from=simulator&att_axe=3&att_light=2&att_ram=1`: Truppen vorbefüllt (`value`),
+  Ziel **nicht** (das setzt das Spiel nur mit `x`/`y` in der URL). `data-all-count` = Truppen zu Hause.
+  Welt ohne Bogenschützen/Miliz: 10 Einheiten.
