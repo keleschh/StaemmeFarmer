@@ -21,7 +21,12 @@
 // Anfragen ans Spiel: einmal die Einheitendaten (gecacht in localStorage "Konter_unitInfo")
 // und je angegriffenem Dorf einmal der Versammlungsplatz (Truppen zu Hause).
 
-if (typeof ScriptAPI !== 'undefined') ScriptAPI.register('Konter', true, 'keleschh', '');
+// Registrierung beim Spiel; darf das Skript nie stoppen (das Spiel wirft z. B. bei leerer Kontaktangabe)
+try {
+  if (typeof ScriptAPI !== 'undefined') ScriptAPI.register('Konter', true, 'keleschh', 'keleschh@users.noreply.github.com');
+} catch (e) {
+  console.log('Konter: ScriptAPI.register fehlgeschlagen', e);
+}
 
 window.Konter = (function () {
   const RULES = {

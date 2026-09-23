@@ -55,7 +55,8 @@ export function createKonterEnv(opts = {}) {
     units: UNITS.slice(),
     link_base_pure: `/game.php?village=${VILLAGE_ID}&screen=`,
   };
-  w.ScriptAPI = { register() {} };
+  // the game rejects an empty contact ("parameter ('email') requires a value") -> mimic it
+  w.ScriptAPI = { register(name, active, author, email) { if (!email) throw new Error("ScriptAPI: parameter ('email') requires a value."); } };
   w.messages = { success: [], error: [], info: [] };
   w.UI = {
     SuccessMessage: (m) => w.messages.success.push(m),
