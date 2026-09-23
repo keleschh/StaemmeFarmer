@@ -115,6 +115,67 @@ window.Konter = (function () {
     return home;
   };
 
+  // ---- Einheitendaten (Laufzeit je Feld in Minuten) ----
+  const UNIT_INFO_KEY = 'Konter_unitInfo';
+
+  const ensureUnitInfo = function () {
+    const cached = JSON.parse(localStorage.getItem(UNIT_INFO_KEY) || 'null');
+    if (cached) return $.Deferred().resolve(cached).promise();
+    return $.get('/interface.php?func=get_unit_info').then((xml) => {
+      const info = {};
+      $(xml).find('config').children().each((i, el) => {
+        info[$(el).prop('nodeName')] = { speed: parseFloat($(el).find('speed').text()) };
+      });
+      try { localStorage.setItem(UNIT_INFO_KEY, JSON.stringify(info)); } catch (e) { /* Quota: dann ohne Cache */ }
+      return info;
+    });
+  };
+
+  // ---- Planung ----
+  const pick = function (home, names, worldUnits) {
+    const out = {};
+    names.forEach((u) => {
+      if (worldUnits.indexOf(u) !== -1 && home[u] > 0) out[u] = home[u];
+    });
+    return out;
+  };
+
+  const splitUnits = function (home, worldUnits) {
+    return {
+      off: pick(home, RULES.offUnits, worldUnits),
+      rest: pick(home, RULES.restUnits, worldUnits),
+    };
+  };
+
+  // Verifiziert (HP20, 23.09.2026): nur x/y + from=simulator + att_* füllt Ziel UND Truppen.
+  const placeUrl = function (villageId, coord, units) {
+    let url = '/game.php?village=' + villageId + '&screen=place&x=' + coord.x + '&y=' + coord.y + '&from=simulator';
+    for (const u in units) if (units[u] > 0) url += '&att_' + u + '=' + units[u];
+    return url;
+  };
+
+  const planFor = function (attack, home, unitInfo, nowMs) {
+    const worldUnits = (window.game_data && game_data.units) || Object.keys(home);
+    const { off, rest } = splitUnits(home, worldUnits);
+    const hasOff = Object.keys(off).length > 0;
+    const hasRest = Object.keys(rest).length > 0;
+    const dist = attack.villageCoord && attack.originCoord
+      ? Math.hypot(attack.villageCoord.x - attack.originCoord.x, attack.villageCoord.y - attack.originCoord.y)
+      : attack.distance;
+    let slowest = 0;
+    for (const u in off) if (unitInfo && unitInfo[u] && unitInfo[u].speed > slowest) slowest = unitInfo[u].speed;
+    return {
+      attack,
+      off,
+      rest,
+      urlOff: hasOff && attack.originCoord ? placeUrl(attack.villageId, attack.originCoord, off) : null,
+      urlRest: hasRest && attack.originCoord ? placeUrl(attack.villageId, attack.originCoord, rest) : null,
+      landsAt: hasOff && slowest ? Math.round(nowMs + dist * slowest * 60000) : null,
+      sendFrom: attack.arrival - RULES.cancelWindowMin * 60000,
+      cancelBefore: attack.arrival - RULES.cancelMarginSec * 1000,
+    };
+  };
+
   const init = function () {
     if (!$('#incomings_table').length) {
       UI.ErrorMessage(messages.wrongScreen);
@@ -122,7 +183,7 @@ window.Konter = (function () {
     }
   };
 
-  return { init, RULES, _internals: { messages, serverNow, parseArrival, parseIncomings, parseHomeUnits } };
+  return { init, RULES, _internals: { messages, serverNow, parseArrival, parseIncomings, parseHomeUnits, splitUnits, placeUrl, planFor, ensureUnitInfo } };
 })();
 
 window.Konter.init();
