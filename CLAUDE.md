@@ -201,6 +201,8 @@ Plan: `docs/superpowers/plans/2026-09-23-konter.md`.
   `cancelWindowMin` 10, `cancelMarginSec` 30. Nur Einheiten aus `game_data.units`; snob/militia nie.
 - Anfragen: `get_unit_info` (Cache `Konter_unitInfo`) + 1 × Versammlungsplatz je angegriffenem Dorf
   (`data-all-count` = Truppen zu Hause). Sperrseite → Meldung.
+- `ScriptAPI.register` braucht eine nicht-leere Kontaktangabe, sonst wirft das Spiel und das ganze Skript
+  bricht ab (live gesehen 23.09.2026). Aufruf steht in try/catch; der Test-Stub wirft bei leerer Angabe.
 - Tests: `test/konter.test.js` mit eigenem Harness `test/konter-setup.js`, Fixtures `test/fixtures/konter/`.
 - Offen: Vorlagen-Dialog zum Variieren von Off/Rest (der Spieler ändert bis dahin die Zahlen im Formular).
   Der Spieler spielt seit 23.09.2026 auf HP20 (`dec1`, Dorf 391); der de259-Account wird gelöscht.
